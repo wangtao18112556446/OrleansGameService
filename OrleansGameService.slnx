@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GameServer.Contracts/GameServer.Contracts.csproj" />
+    <Project Path="src/GameServer.Domain/GameServer.Domain.csproj" />
+    <Project Path="src/GameServer.Gateway/GameServer.Gateway.csproj" />
+    <Project Path="src/GameServer.Grains/GameServer.Grains.csproj" />
+    <Project Path="src/GameServer.Infrastructure/GameServer.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GameServer.Tests/GameServer.Tests.csproj" />
+  </Folder>
+</Solution>
