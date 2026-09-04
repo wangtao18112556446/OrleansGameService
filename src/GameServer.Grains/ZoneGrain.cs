@@ -16,6 +16,7 @@ public sealed class ZoneGrain(
         var logicalZoneId = LogicalZoneId();
         var content = contentCatalog.GetVersion(contentVersion);
         if (!content.Zones.TryGetValue(logicalZoneId, out var definition)) throw new InvalidOperationException("Unknown zone.");
+        // Zone 实例首次启用后固定内容版本，避免同一地图内玩家和怪物按不同配置结算。
         if (string.IsNullOrWhiteSpace(state.State.ContentVersion)) { state.State.ContentVersion = contentVersion; await EnsureMonstersAsync(); }
         if (!string.Equals(state.State.ContentVersion, contentVersion, StringComparison.Ordinal)) throw new InvalidOperationException("Zone content version is pinned until the next instance is created.");
         if (!state.State.Players.ContainsKey(characterId) && state.State.Players.Count >= definition.Capacity) throw new InvalidOperationException("Zone is full.");
@@ -38,6 +39,7 @@ public sealed class ZoneGrain(
         if (!content.Monsters.TryGetValue(monsterId, out var monster)) return new AttackResult(false, "unknown_target", false, null, 0, 0);
         var monsterGrain = GrainFactory.GetGrain<IMonsterGrain>(MonsterKey(monsterId));
         var target = await monsterGrain.GetSnapshotAsync();
+        // 区域保存角色坐标，因此由区域在转发伤害前做权威距离校验。
         var decision = CombatRules.ValidateAttack(attacker, target.Position, range);
         if (!decision.Allowed) return new AttackResult(false, decision.ErrorCode, false, null, 0, target.Health);
         var result = await monsterGrain.ApplyDamageAsync(damage, operationId);
@@ -58,6 +60,8 @@ public sealed class ZoneGrain(
     private IReadOnlyList<InventoryStack> ResolveDrops(GameContent content, MonsterDefinition monster, string operationId)
     {
         if (monster.DropTableId is not { } tableId || !content.DropTables.TryGetValue(tableId, out var table)) return [new InventoryStack(monster.DropItemId, monster.DropCount)];
+        // 使用 operationId 派生确定性随机数：同一攻击重试时得到相同掉落，
+        // 再交由角色奖励账本进行持久化去重。
         return table.Entries.Where((entry, index) => Roll(operationId, index) < entry.Probability).GroupBy(x => x.ItemId, StringComparer.Ordinal).Select(x => new InventoryStack(x.Key, x.Sum(e => e.Quantity))).ToArray();
     }
     private static decimal Roll(string operationId, int index)

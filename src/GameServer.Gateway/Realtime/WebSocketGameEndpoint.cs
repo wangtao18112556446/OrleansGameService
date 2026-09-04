@@ -15,6 +15,7 @@ public static class WebSocketGameEndpoint
         var accountId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrWhiteSpace(characterId) || string.IsNullOrWhiteSpace(accountId)) { context.Response.StatusCode = StatusCodes.Status401Unauthorized; return; }
         var grains = context.RequestServices.GetRequiredService<IGrainFactory>();
+        // 连接建立前验证角色归属，不能把 query string 中的 characterId 当作授权依据。
         if (!await grains.GetGrain<IAccountGrain>(accountId).OwnsCharacterAsync(characterId)) { context.Response.StatusCode = StatusCodes.Status403Forbidden; return; }
         var character = grains.GetGrain<ICharacterGrain>(characterId);
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
@@ -27,6 +28,7 @@ public static class WebSocketGameEndpoint
             RealtimeEnvelope incoming;
             try { incoming = MessagePackSerializer.Deserialize<RealtimeEnvelope>(bytes); }
             catch (Exception) { await SendErrorAsync(socket, "invalid_envelope", "The binary envelope is invalid.", context.RequestAborted); continue; }
+            // 先拒绝未知协议版本，避免把新版本消息按旧版 MessagePack 形状错误反序列化。
             if (incoming.ProtocolVersion is not (1 or 2)) { await SendErrorAsync(socket, "unsupported_protocol", "Only protocol versions 1 and 2 are supported.", context.RequestAborted); continue; }
             CommandResult result;
             try { result = await DispatchAsync(character, incoming); }
@@ -40,6 +42,7 @@ public static class WebSocketGameEndpoint
         (_, RealtimeMessageIds.Attack) => character.AttackAsync(MessagePackSerializer.Deserialize<AttackCommand>(envelope.Payload), envelope.OperationId),
         (_, RealtimeMessageIds.AcceptQuest) => character.AcceptQuestAsync(MessagePackSerializer.Deserialize<QuestCommand>(envelope.Payload), envelope.OperationId),
         (_, RealtimeMessageIds.CompleteQuest) => character.CompleteQuestAsync(MessagePackSerializer.Deserialize<QuestCommand>(envelope.Payload), envelope.OperationId),
+        // V2 独有命令显式受版本保护，保留 V1 wire contract 的既有消息集合。
         (2, RealtimeMessageIds.UseSkill) => character.UseSkillAsync(MessagePackSerializer.Deserialize<UseSkillCommand>(envelope.Payload), envelope.OperationId),
         (2, RealtimeMessageIds.Equip) => character.EquipAsync(MessagePackSerializer.Deserialize<EquipCommand>(envelope.Payload), envelope.OperationId),
         (2, RealtimeMessageIds.Unequip) => character.UnequipAsync(MessagePackSerializer.Deserialize<UnequipCommand>(envelope.Payload), envelope.OperationId),
@@ -65,6 +68,7 @@ public static class WebSocketGameEndpoint
     }
     private static async Task<byte[]?> ReceiveAsync(WebSocket socket, CancellationToken cancellationToken)
     {
+        // 分片帧必须在完整消息后再反序列化；64 KiB 上限限制单连接的内存占用。
         using var stream = new MemoryStream(); var buffer = new byte[8192]; WebSocketReceiveResult result;
         do { result = await socket.ReceiveAsync(buffer, cancellationToken); if (result.MessageType == WebSocketMessageType.Close) { await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "closed", cancellationToken); return null; } if (stream.Length + result.Count > 64 * 1024) throw new InvalidOperationException(); await stream.WriteAsync(buffer.AsMemory(0, result.Count), cancellationToken); } while (!result.EndOfMessage);
         return stream.ToArray();

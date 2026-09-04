@@ -4,6 +4,7 @@ namespace GameServer.Domain.Gameplay;
 
 public static class CombatRules
 {
+    // 距离校验保留在纯领域层，使角色、区域等入口共享同一判定而不会产生规则漂移。
     public static RuleDecision ValidateAttack(WorldPosition attacker, WorldPosition target, decimal range)
         => attacker.DistanceTo(target) <= (float)range
             ? new RuleDecision(true)
@@ -17,6 +18,7 @@ public static class CombatRules
 
 public static class QuestStateMachine
 {
+    // 已完成任务不可被重新接受，避免后续奖励流程因重复接取而再次满足完成条件。
     public static QuestProgress Accept(QuestProgress? current, string questId)
         => current is { IsCompleted: true } ? current : new QuestProgress(questId, current?.Progress ?? 0, true, false);
 

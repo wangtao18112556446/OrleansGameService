@@ -13,9 +13,11 @@ public sealed class RewardLedger(IDbContextFactory<GameDbContext> database) : IR
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            // 操作号作为跨 Grain 重试的持久化幂等键；内存状态丢失后仍能阻止重复发奖。
             if (await db.RewardOperations.AnyAsync(x => x.OperationId == operationId, cancellationToken)) return false;
             var now = DateTimeOffset.UtcNow;
             db.RewardOperations.Add(new RewardOperationEntity { OperationId = operationId, CharacterId = characterId, Kind = kind, CreatedAt = now });
+            // 账本明细和物品投影必须在同一事务提交，保证审计记录与玩家可查询库存一致。
             foreach (var reward in rewards.GroupBy(x => x.ItemId, StringComparer.Ordinal).Select(x => new RewardGrant(x.Key, x.Sum(y => y.Quantity))))
             {
                 db.LedgerEntries.Add(new LedgerEntry { OperationId = operationId, CharacterId = characterId, Kind = kind, ItemId = reward.ItemId, Quantity = reward.Quantity, CreatedAt = now });

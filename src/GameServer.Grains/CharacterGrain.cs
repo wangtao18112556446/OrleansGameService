@@ -35,6 +35,7 @@ public sealed class CharacterGrain(
     {
         var content = contentCatalog.GetVersion(contentVersion);
         if (!content.Zones.ContainsKey(zoneId)) return Failure("invalid_zone");
+        // 先退出旧实例再切换，确保一个角色不会同时留在两个 Zone Grain 的玩家列表中。
         if (!string.IsNullOrWhiteSpace(state.State.ZoneId)) await GrainFactory.GetGrain<IZoneGrain>(state.State.ZoneId).LeaveAsync(this.GetPrimaryKeyString());
         state.State.ZoneId = ZoneKey(zoneId, contentVersion);
         state.State.ContentVersion = contentVersion;
@@ -60,10 +61,12 @@ public sealed class CharacterGrain(
 
     public async Task<CommandResult> AttackAsync(AttackCommand command, string operationId)
     {
+        // 客户端重传同一操作时直接返回成功；奖励幂等还会在持久化账本中再次兜底。
         if (WasProcessed(operationId)) return Success();
         if (state.State.LastAttackAt is { } last && DateTimeOffset.UtcNow - last < TimeSpan.FromMilliseconds(500)) return Failure("attack_on_cooldown");
         var content = Content();
         if (!content.Monsters.TryGetValue(command.TargetMonsterId, out var monster)) return Failure("unknown_target");
+        // 先按最坏情况下的掉落预检背包。这样击杀后不会出现奖励已生成却无处存放的半完成状态。
         var potential = PotentialDrops(content, monster);
         if (!InventoryRules.CanReceive(state.State.Inventory, potential, content.Items)) return Failure("inventory_full");
         var attributes = Attributes(content);
@@ -89,6 +92,7 @@ public sealed class CharacterGrain(
         if (skill.ResourceId is { } costResource) resources[costResource] = -skill.ResourceCost;
         decimal damage = 0;
         var buffs = new List<string>();
+        // 兼容旧内容包的单 EffectId 与新内容包的多 EffectIds，两种形态都归一到同一结算循环。
         foreach (var effectId in skill.EffectIds.Count == 0 ? [skill.EffectId] : skill.EffectIds)
         {
             if (!content.Effects.TryGetValue(effectId, out var effect)) return Failure("unknown_effect");
@@ -188,9 +192,11 @@ public sealed class CharacterGrain(
     private async Task AwardAttackAsync(GameContent content, string monsterId, string operationId, AttackResult attack)
     {
         if (!attack.TargetDefeated) return;
+        // 任务进度与伤害结果同属角色状态；即使该怪物没有掉落，也必须在击杀时推进进度。
         RecordQuestKill(monsterId);
         if (attack.Rewards.Count == 0) return;
         var rewards = attack.Rewards.Select(x => new RewardGrant(x.ItemId, x.Quantity)).ToArray();
+        // 账本以 operationId 去重，处理 Grain 重激活或网络重试时重复发奖的风险。
         if (await rewardLedger.TryRecordAsync(this.GetPrimaryKeyString(), operationId, "monster_drop", rewards))
         {
             AddRewards(rewards);
@@ -201,6 +207,7 @@ public sealed class CharacterGrain(
     private IReadOnlyList<RewardGrant> PotentialDrops(GameContent content, MonsterDefinition monster) => monster.DropTableId is { } tableId && content.DropTables.TryGetValue(tableId, out var table) ? table.Entries.Select(x => new RewardGrant(x.ItemId, x.Quantity)).ToArray() : [new RewardGrant(monster.DropItemId, monster.DropCount)];
     private AttributeSet Attributes(GameContent content)
     {
+        // Buff 到期在构建属性前清理，确保快照和实际战斗使用完全相同的有效 modifier 集合。
         ExpireBuffs();
         var attributes = new AttributeSet(content.Attributes, state.State.BaseAttributes);
         foreach (var itemId in state.State.EquippedItems.Values) if (content.Items.TryGetValue(itemId, out var item)) foreach (var modifier in item.Modifiers) attributes.AddModifier(modifier);
@@ -213,6 +220,8 @@ public sealed class CharacterGrain(
         foreach (var resource in content.Resources.Values)
         {
             var maximum = attributes.Get(resource.MaximumAttributeId);
+            // 首次初始化时，未明确配置初始值的资源默认满值；之后始终夹在当前最大值内，
+            // 以处理装备或 Buff 变化导致最大值下降的情况。
             var current = state.State.Resources.GetValueOrDefault(resource.Id, resource.InitialValue > 0 ? resource.InitialValue : maximum);
             state.State.Resources[resource.Id] = Math.Clamp(current, 0, maximum);
         }
@@ -235,6 +244,7 @@ public sealed class CharacterGrain(
     private GameContent Content() => contentCatalog.GetVersion(state.State.ContentVersion);
     private static string ZoneKey(string zoneId, string contentVersion) => $"{zoneId}:{contentVersion}";
     private bool WasProcessed(string operationId) => string.IsNullOrWhiteSpace(operationId) || state.State.ProcessedOperationIds.Contains(operationId);
+    // 仅保留最近的操作号，在有限状态大小与短期网络重试的幂等保障之间取平衡。
     private void CompleteOperation(string operationId) { if (!string.IsNullOrWhiteSpace(operationId)) state.State.ProcessedOperationIds.Add(operationId); if (state.State.ProcessedOperationIds.Count > 512) state.State.ProcessedOperationIds = state.State.ProcessedOperationIds.TakeLast(512).ToHashSet(StringComparer.Ordinal); }
     private CommandResult Success(AttackResult? attack = null, NpcInteraction? interaction = null) => new(true, null, Snapshot(), attack) { SnapshotV2 = SnapshotV2(), Interaction = interaction };
     private CommandResult Failure(string code, AttackResult? attack = null) => new(false, code, Snapshot(), attack) { SnapshotV2 = SnapshotV2() };
