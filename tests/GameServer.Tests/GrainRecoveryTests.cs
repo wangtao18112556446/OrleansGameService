@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using GameServer.Abstractions;
 using GameServer.Contracts;
 using GameServer.Domain.Gameplay;
 using GameServer.Grains.State;
@@ -34,13 +35,20 @@ public sealed class GrainRecoveryTests : IAsyncLifetime
             }
         };
         var catalog = new Mock<IGameContentCatalog>();
-        catalog.Setup(x => x.GetVersion(It.IsAny<string>())).Returns(content);
-        catalog.Setup(x => x.GetActive()).Returns(content);
+        var contentVersion = new GameContentVersion(content);
+        catalog.Setup(x => x.GetVersion(It.IsAny<string>())).Returns(contentVersion);
+        catalog.Setup(x => x.GetActive()).Returns(contentVersion);
         var builder = new InProcessTestClusterBuilder(1);
         builder.ConfigureSilo((_, silo) => silo.ConfigureServices(services =>
         {
             services.AddSingleton(catalog.Object);
-            services.AddSingleton(GameplayCore.CreateRegistry());
+            services.AddSingleton<IGameplayFeatureCatalog>(new GameplayFeatureCatalog(
+            [
+                new DamageMonsterEffect(),
+                new RestoreResourceEffect(),
+                new ConsumeResourceEffect(),
+                new ApplyBuffEffect()
+            ]));
             services.AddSingleton<IRewardLedger>(ledger);
             services.AddSingleton<TimeProvider>(timeProvider);
             services.AddKeyedSingleton<IGrainStorage>("gameStore", storage);

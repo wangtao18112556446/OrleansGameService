@@ -1,11 +1,16 @@
+using GameServer.Abstractions;
 using GameServer.Contracts;
 using GameServer.Domain.Gameplay;
+using GameServer.Infrastructure;
 using GameServer.Infrastructure.Content;
+using GameServer.SampleGameplay;
 using MessagePack;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GameServer.Tests;
 
-/// <summary>验证玩法模块注册、内容引用和基础库存行为。</summary>
+/// <summary>验证玩法模块注册、类型化内容、效果解析和协议兼容行为。</summary>
 public sealed class GameplayCoreTests
 {
     [Fact]
@@ -20,46 +25,57 @@ public sealed class GameplayCoreTests
     [Fact]
     public void Built_in_damage_effect_scales_from_attributes()
     {
-        var registry = GameplayCore.CreateRegistry();
+        using var provider = CreateProvider();
+        var compiler = provider.GetRequiredService<JsonGameContentCompiler>();
+        var version = compiler.Compile(GameContentDefaults.Create());
+        var catalog = provider.GetRequiredService<IGameplayFeatureCatalog>();
         var effect = new EffectDefinition("strike", EffectKind.DamageMonster, 5) { ScalingAttributeId = "attack", ScalingFactor = 1.5m };
-        var result = registry.GetEffect(effect.Kind).Resolve(effect, new EffectContext(new Dictionary<string, decimal> { ["attack"] = 10 }));
+        var result = catalog.GetEffect(BuiltInEffectTypes.Resolve(effect)).Resolve(
+            effect,
+            new EffectContext(version, new Dictionary<string, decimal> { ["attack"] = 10 }));
         Assert.Equal(20m, result.MonsterDamage);
     }
 
     [Fact]
     public void Content_validation_rejects_unknown_effect()
     {
-        var content = new GameContent("test", new Dictionary<string, AttributeDefinition> { ["attack"] = new("attack", 1) }, new Dictionary<string, ItemDefinition>(), new Dictionary<string, MonsterDefinition>(), new Dictionary<string, QuestDefinition>())
+        using var provider = CreateProvider();
+        var content = GameContentDefaults.Create() with
         {
+            Classes = new Dictionary<string, CharacterClassDefinition>(),
             Skills = new Dictionary<string, SkillDefinition> { ["skill"] = new("skill", "Skill", 0, TimeSpan.Zero, "missing") }
         };
-        Assert.Throws<InvalidOperationException>(() => JsonGameContentCatalog.Validate(content));
+        var exception = Assert.Throws<ContentValidationException>(() => provider.GetRequiredService<JsonGameContentCompiler>().Compile(content));
+        Assert.Contains(exception.Issues, issue => issue.Code == "unknown_effect");
     }
 
     [Fact]
     public void Content_validation_rejects_invalid_movement_budget()
     {
+        using var provider = CreateProvider();
         var content = GameContentDefaults.Create() with { Movement = new MovementDefinition(0f, TimeSpan.FromSeconds(2)) };
-        Assert.Throws<InvalidOperationException>(() => JsonGameContentCatalog.Validate(content));
+        var exception = Assert.Throws<ContentValidationException>(() => provider.GetRequiredService<JsonGameContentCompiler>().Compile(content));
+        Assert.Contains(exception.Issues, issue => issue.Code == "invalid_movement");
     }
 
     [Fact]
-    public void Legacy_content_without_movement_definition_uses_compatible_defaults()
+    public void Legacy_content_without_module_sections_uses_compatible_defaults()
     {
         const string legacyJson = """
             { "version": "legacy", "attributes": {}, "items": {}, "monsters": {}, "quests": {} }
             """;
-        var content = JsonGameContentCatalog.Deserialize(legacyJson);
-        JsonGameContentCatalog.Validate(content);
-        Assert.Equal(12f, MovementRules.Capacity(content.Movement));
+        using var provider = CreateProvider();
+        var version = provider.GetRequiredService<JsonGameContentCompiler>().Compile(legacyJson);
+        Assert.Equal(12f, MovementRules.Capacity(version.Content.Movement));
+        Assert.Equal(0.25m, version.GetModuleContent<VampirismContent>(VampirismModuleExtensions.ModuleId).HealingRatio);
     }
 
     [Fact]
     public void Default_content_has_a_complete_core_module_graph()
     {
-        var content = GameContentDefaults.Create();
-        JsonGameContentCatalog.Validate(content);
-        Assert.Contains("basic-attack", content.Classes["adventurer"].InitialSkillIds);
+        using var provider = CreateProvider();
+        var version = provider.GetRequiredService<JsonGameContentCompiler>().Compile(GameContentDefaults.Create());
+        Assert.Contains("basic-attack", version.Content.Classes["adventurer"].InitialSkillIds);
     }
 
     [Fact]
@@ -67,9 +83,10 @@ public sealed class GameplayCoreTests
     {
         var path = Path.GetFullPath(
             Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "GameServer.Gateway", "Content", "game-content.v1.json"));
-        var content = JsonGameContentCatalog.Deserialize(File.ReadAllText(path));
-        JsonGameContentCatalog.Validate(content);
-        Assert.Equal(12f, MovementRules.Capacity(content.Movement));
+        using var provider = CreateProvider();
+        var version = provider.GetRequiredService<JsonGameContentCompiler>().Compile(File.ReadAllText(path));
+        Assert.Equal(12f, MovementRules.Capacity(version.Content.Movement));
+        Assert.Equal("health", version.GetModuleContent<VampirismContent>(VampirismModuleExtensions.ModuleId).HealingResourceId);
     }
 
     [Fact]
@@ -84,21 +101,11 @@ public sealed class GameplayCoreTests
     public void Realtime_snapshot_round_trips_complete_character_state()
     {
         var character = new CharacterSnapshot(
-            "character-1",
-            "account-1",
-            "Hero",
-            "starter-plains:v1",
-            "v1",
-            new WorldPosition(2, 3),
-            4,
-            new Dictionary<string, decimal> { ["attack"] = 12m },
-            [new InventoryStack("sword", 1)],
-            [new QuestProgress("slime-hunt", 1, true, false)],
-            "adventurer",
-            new Dictionary<string, decimal> { ["mana"] = 8m },
-            [new EquippedItem("main-hand", "sword")],
-            [new ActiveBuff("power", DateTimeOffset.Parse("2026-09-07T00:00:00Z"))],
-            ["power-strike"]);
+            "character-1", "account-1", "Hero", "starter-plains:v1", "v1", new WorldPosition(2, 3), 4,
+            new Dictionary<string, decimal> { ["attack"] = 12m }, [new InventoryStack("sword", 1)],
+            [new QuestProgress("slime-hunt", 1, true, false)], "adventurer",
+            new Dictionary<string, decimal> { ["mana"] = 8m }, [new EquippedItem("main-hand", "sword")],
+            [new ActiveBuff("power", DateTimeOffset.Parse("2026-09-07T00:00:00Z"))], ["power-strike"]);
         var payload = new CharacterSnapshotPayload
         {
             Character = character,
@@ -114,5 +121,16 @@ public sealed class GameplayCoreTests
         Assert.Equal("power", restored.Character.Buffs.Single().BuffId);
         Assert.Equal("power-strike", restored.Character.Skills.Single());
         Assert.Equal("guard-aria", restored.Interaction!.NpcId);
+    }
+
+    private static ServiceProvider CreateProvider()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Postgres"] = "Host=localhost;Database=test;Username=test;Password=test"
+        }).Build();
+        var services = new ServiceCollection();
+        services.AddGameServer(configuration).AddSampleVampirism();
+        return services.BuildServiceProvider();
     }
 }

@@ -10,6 +10,8 @@
 - [开发路线与功能清单](docs/ROADMAP.md)：阶段依赖、范围及验收条件。
 - [近期开发待办](docs/BACKLOG.md)：可直接拆成 Issue 的任务与验证要求。
 - [架构与扩展原则](docs/ARCHITECTURE.md)：状态归属、模块职责及设计模式选择。
+- [模块开发指南](docs/guides/modules.md)：显式注册效果、类型化内容与模块校验。
+- [运行配置](docs/operations/configuration.md)：JWT、Orleans、实时消息、限流与内容启动参数。
 - [工程规范](docs/ENGINEERING.md)与[贡献指南](CONTRIBUTING.md)：开发、测试、文档和发布要求。
 
 优先采用“通用核心 + 可选玩法模块 + 示例游戏”的演进方向。新能力需同时交付实现、针对性测试和对应文档；公共协议、持久化状态和跨 Grain 一致性变更需要记录设计取舍。开源许可证尚待确定，当前没有声明可再分发的开源授权。
@@ -20,11 +22,11 @@
 
 开发时先注册 `POST /api/auth/register`，再登录 `POST /api/auth/login` 获取 Bearer JWT；创建角色可提交 `{ "name": "Rin", "classId": "adventurer" }`（当内容包只有一个职业时 `classId` 可省略），再调用 `/api/characters/{id}/enter`（`{ "zoneId": "starter-plains" }`）进入当前内容版本的区域实例。WebSocket 连接为 `/ws?characterId={id}`，需携带 Bearer JWT，二进制帧为 `RealtimeEnvelope`。
 
-当前实时协议支持移动、普攻、任务、`UseSkill`、`Equip`、`Unequip` 与 `InteractNpc` 命令，并统一返回包含职业、资源、装备、Buff、已学技能及可选 NPC 交互结果的完整快照。项目尚未发布客户端，因此协议只维护当前形态，不保留未使用的历史版本。内容包只可使用服务器内置的伤害、资源和 Buff 效果类型；导入后的内容版本不可覆盖，已运行区域会固定使用其创建时的版本。
+当前实时协议支持移动、普攻、任务、`UseSkill`、`Equip`、`Unequip` 与 `InteractNpc` 命令，并统一返回包含职业、资源、装备、Buff、已学技能及可选 NPC 交互结果的完整快照。项目尚未发布客户端，因此协议只维护当前形态，不保留未使用的历史版本。效果可由显式注册的编译期玩法模块扩展；导入后的内容版本不可覆盖，已运行区域会固定使用其创建时的版本。
 
-`Content/game-content.v1.json` 是版本化的首个内容包。新内容通过管理员 `POST /api/admin/content/import` 导入；已运行区域固定其内容版本。
+`Content/game-content.v1.json` 是版本化的首个内容包，其中 `modules` 按模块 ID 保存强类型扩展内容。示例宿主注册了独立的 `sample.vampirism` 吸血模块。新内容通过管理员 `POST /api/admin/content/import` 导入；已运行区域固定其内容版本。
 
-开发环境显式使用 Orleans 内存存储；Production/Compose 使用 PostgreSQL ADO.NET 集群和 Grain 存储。生产环境必须通过环境变量替换 `Jwt__SigningKey`。
+开发环境显式使用 Orleans 内存存储；Production/Compose 使用 PostgreSQL ADO.NET 集群和 Grain 存储。生产环境必须通过环境变量替换 `Jwt__SigningKey`。宿主参数使用 Options 启动校验，完整键与默认值见[运行配置](docs/operations/configuration.md)。
 
 ## 第一轮：持久化与故障恢复
 
@@ -59,7 +61,7 @@ dotnet test OrleansGameService.slnx
 pwsh -File scripts/Test-Integration.ps1
 ```
 
-普通测试包含实时命令序列化往返、真实 Orleans 测试集群、存储提交前/后故障注入、奖励重投和区域切换恢复。真实 PostgreSQL 与 HTTP/WebSocket 测试在未配置依赖时明确显示为跳过。
+普通测试包含模块依赖与冲突、类型化内容、配置校验、实时命令序列化往返、真实 Orleans 测试集群、存储提交前/后故障注入、奖励重投和区域切换恢复。真实 PostgreSQL 与 HTTP/WebSocket 测试在未配置依赖时明确显示为跳过。
 
 集成脚本启动独立 `orleans-game-tests` Compose 项目，使用 PostgreSQL `15432`、Redis `16379` 和 Gateway `18080` 端口。它验证迁移及账本并发，执行注册、登录、创建角色、入区、接任务、击杀、领奖，再重启 Gateway 验证账号、角色状态和操作回执，最后重跑 Orleans 初始化。测试账号暂存在被 Git 忽略的 `TestResults/smoke-state.json`，CI 不上传该文件。完成后可用 `docker compose -p orleans-game-tests down` 停止测试实例，保留测试数据卷。
 

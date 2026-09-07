@@ -1,7 +1,9 @@
 using System.Net.WebSockets;
 using System.Security.Claims;
 using GameServer.Contracts;
+using GameServer.Gateway.Configuration;
 using MessagePack;
+using Microsoft.Extensions.Options;
 using Orleans;
 
 namespace GameServer.Gateway.Realtime;
@@ -26,6 +28,7 @@ public static class WebSocketGameEndpoint
         }
 
         var grains = context.RequestServices.GetRequiredService<IGrainFactory>();
+        var realtime = context.RequestServices.GetRequiredService<IOptions<RealtimeOptions>>().Value;
         // 连接建立前验证角色归属，不能把 query string 中的 characterId 当作授权依据。
         if (!await grains.GetGrain<IAccountGrain>(accountId).OwnsCharacterAsync(characterId))
         {
@@ -40,11 +43,11 @@ public static class WebSocketGameEndpoint
             byte[]? bytes;
             try
             {
-                bytes = await ReceiveAsync(socket, context.RequestAborted);
+                bytes = await ReceiveAsync(socket, realtime, context.RequestAborted);
             }
             catch (InvalidOperationException)
             {
-                await SendErrorAsync(socket, "message_too_large", "WebSocket message exceeds 64 KiB.", context.RequestAborted);
+                await SendErrorAsync(socket, "message_too_large", $"WebSocket message exceeds {realtime.MaxMessageBytes} bytes.", context.RequestAborted);
                 break;
             }
 
@@ -90,11 +93,11 @@ public static class WebSocketGameEndpoint
         var zone = await grains.GetGrain<IZoneGrain>(snapshot.ZoneId).GetSnapshotAsync();
         await SendAsync(socket, new RealtimeEnvelope { MessageId = RealtimeMessageIds.Snapshot, RequestId = incoming.RequestId, OperationId = incoming.OperationId, Payload = MessagePackSerializer.Serialize(new CharacterSnapshotPayload { Character = snapshot, Zone = zone, Interaction = result.Interaction }) }, ct);
     }
-    private static async Task<byte[]?> ReceiveAsync(WebSocket socket, CancellationToken cancellationToken)
+    private static async Task<byte[]?> ReceiveAsync(WebSocket socket, RealtimeOptions options, CancellationToken cancellationToken)
     {
-        // 分片帧必须在完整消息后再反序列化；64 KiB 上限限制单连接的内存占用。
-        using var stream = new MemoryStream(); var buffer = new byte[8192]; WebSocketReceiveResult result;
-        do { result = await socket.ReceiveAsync(buffer, cancellationToken); if (result.MessageType == WebSocketMessageType.Close) { await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "closed", cancellationToken); return null; } if (stream.Length + result.Count > 64 * 1024) throw new InvalidOperationException(); await stream.WriteAsync(buffer.AsMemory(0, result.Count), cancellationToken); } while (!result.EndOfMessage);
+        // 分片帧必须在完整消息后再反序列化；可配置上限限制单连接的内存占用。
+        using var stream = new MemoryStream(); var buffer = new byte[options.ReceiveBufferBytes]; WebSocketReceiveResult result;
+        do { result = await socket.ReceiveAsync(buffer, cancellationToken); if (result.MessageType == WebSocketMessageType.Close) { await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "closed", cancellationToken); return null; } if (stream.Length + result.Count > options.MaxMessageBytes) throw new InvalidOperationException(); await stream.WriteAsync(buffer.AsMemory(0, result.Count), cancellationToken); } while (!result.EndOfMessage);
         return stream.ToArray();
     }
     private static Task SendErrorAsync(WebSocket socket, string code, string message, CancellationToken ct, string requestId = "", string operationId = "") => SendAsync(socket, new RealtimeEnvelope { MessageId = RealtimeMessageIds.Error, RequestId = requestId, OperationId = operationId, Payload = MessagePackSerializer.Serialize(new ErrorPayload { Code = code, Message = message }) }, ct);

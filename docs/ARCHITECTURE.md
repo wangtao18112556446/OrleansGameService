@@ -9,15 +9,21 @@ flowchart TD
     Gateway[Gateway：接入与装配] --> Grains[Grains：状态与流程]
     Gateway --> Infrastructure[Infrastructure：外部系统适配]
     Gateway --> Domain[Domain：确定性规则]
-    Gateway --> Contracts[Contracts：公共契约]
+    Gateway --> Abstractions[Abstractions：二次开发接缝]
+    Gateway --> Sample[SampleGameplay：示例玩法模块]
     Grains --> Domain
+    Grains --> Abstractions
     Grains --> Contracts
     Infrastructure --> Domain
+    Infrastructure --> Abstractions
     Infrastructure --> Contracts
+    Domain --> Abstractions
     Domain --> Contracts
+    Sample --> Abstractions
+    Abstractions --> Contracts
 ```
 
-目前 Contracts 同时包含网络 DTO、Grain 接口及内部内容/账本接口；Domain 因而间接接触带序列化标记的契约。这是需要控制的现状。未来有独立客户端包需求时再分离网络协议、内部抽象和 Grain 契约，并保留类型别名、序列化编号与升级路径。
+Contracts 只保留网络 DTO、Grain 接口和序列化内容模型；`GameServer.Abstractions` 承载内容目录、奖励账本、效果和模块组合 Interface。未来有独立客户端包需求时再拆分网络协议与 Grain 契约，并保留类型别名、序列化编号与升级路径。
 
 Gateway 只处理身份、连接、协议与宿主装配；Grains 负责权威状态、业务顺序和恢复；Domain 接受显式输入并返回规则结果；Infrastructure 实现数据库、内容来源和缓存适配。禁止 Domain 引用 EF Core、Redis、HTTP 上下文或 Grain 实现，也禁止 Grains 依赖 Infrastructure 的实现类型。
 
@@ -48,7 +54,9 @@ Module（模块）应以小而完整的 Interface（接口）封装状态约束�
 - 基础设施适配器：PostgreSQL、Redis、内容来源、网络推送等；不决定游戏数值和奖励规则。
 - 示例游戏：职业、地图、怪物、任务配置以及具体玩法策略，展示框架接入方法。
 
-现有 `IGameFeatureModule` / `GameFeatureRegistry` 已用于注册内置效果，但尚不具备完整的模块生命周期与依赖管理。`IGameRuleHandler` 等抽象需在真实用例中验证价值；未使用接口不能被列为已实现的插件能力。先以编译期注册、启动校验为主，动态加载程序集和任意脚本执行另行设计。
+当前模块通过 `AddGameServer(configuration)` 返回的 `GameServerBuilder` 显式注册。模块声明稳定 ID 和依赖，可贡献依赖注入注册、字符串标识的效果实现、一个类型化内容节和内容校验器；模块图、效果冲突与内容引用在启动或导入阶段失败。运行期 `IGameplayFeatureCatalog` 冻结后只读，`GameContentVersion` 同时携带核心内容和按模块 ID 隔离的强类型内容。
+
+`GameServer.SampleGameplay` 仅引用 Abstractions，并实现 `sample.vampirism`，用于证明新增效果无需修改核心注册表。模块没有自定义启停生命周期；需要宿主生命周期时使用标准 `IHostedService`。当前不支持程序集扫描、热卸载、脚本、自定义实时消息或模块自有 Grain 状态，详见[模块开发指南](guides/modules.md)和 [ADR 0002](adr/0002-compile-time-modules.md)。
 
 ## 设计模式使用准则
 

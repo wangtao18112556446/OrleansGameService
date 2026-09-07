@@ -13,7 +13,7 @@
     "training-sword": { "id": "training-sword", "displayName": "Training Sword", "maxStack": 1, "tags": ["weapon"], "modifiers": [{ "attributeId": "attack", "flatAmount": 5, "percentAmount": 0, "source": "training-sword" }] }
   },
   "classes": {
-    "adventurer": { "id": "adventurer", "displayName": "Adventurer", "initialAttributes": { "health": 100, "mana": 30, "attack": 25, "attackRange": 3 }, "initialSkillIds": ["power-strike", "battle-focus"], "initialItems": [{ "itemId": "training-sword", "quantity": 1 }] }
+    "adventurer": { "id": "adventurer", "displayName": "Adventurer", "initialAttributes": { "health": 100, "mana": 30, "attack": 25, "attackRange": 3 }, "initialSkillIds": ["power-strike", "battle-focus", "vampiric-strike"], "initialItems": [{ "itemId": "training-sword", "quantity": 1 }] }
   },
   "resources": {
     "health": { "id": "health", "displayName": "Health", "maximumAttributeId": "health", "initialValue": 100 },
@@ -22,12 +22,17 @@
   "equipmentSlots": { "weapon": { "id": "weapon", "displayName": "Weapon", "acceptedItemTags": ["weapon"] } },
   "skills": {
     "power-strike": { "id": "power-strike", "displayName": "Power Strike", "resourceCost": 5, "resourceId": "mana", "cooldown": "00:00:01", "effectId": "power-strike-damage", "targetKind": 1 },
-    "battle-focus": { "id": "battle-focus", "displayName": "Battle Focus", "resourceCost": 3, "resourceId": "mana", "cooldown": "00:00:05", "effectId": "battle-focus-buff", "targetKind": 0 }
+    "battle-focus": { "id": "battle-focus", "displayName": "Battle Focus", "resourceCost": 3, "resourceId": "mana", "cooldown": "00:00:05", "effectId": "battle-focus-buff", "targetKind": 0 },
+    "vampiric-strike": { "id": "vampiric-strike", "displayName": "Vampiric Strike", "resourceCost": 4, "resourceId": "mana", "cooldown": "00:00:02", "effectId": "vampiric-strike-damage", "targetKind": 1 }
   },
   "buffs": { "battle-focus": { "id": "battle-focus", "displayName": "Battle Focus", "duration": "00:00:10", "modifiers": [{ "attributeId": "attack", "flatAmount": 3, "percentAmount": 0, "source": "battle-focus" }] } },
   "effects": {
     "power-strike-damage": { "id": "power-strike-damage", "kind": 0, "amount": 5, "scalingAttributeId": "attack", "scalingFactor": 1 },
-    "battle-focus-buff": { "id": "battle-focus-buff", "kind": 3, "buffId": "battle-focus" }
+    "battle-focus-buff": { "id": "battle-focus-buff", "kind": 3, "buffId": "battle-focus" },
+    "vampiric-strike-damage": { "id": "vampiric-strike-damage", "kind": 0, "typeId": "sample.vampirism.damage", "amount": 2, "scalingAttributeId": "attack", "scalingFactor": 0.5 }
+  },
+  "modules": {
+    "sample.vampirism": { "healingResourceId": "health", "healingRatio": 0.25 }
   },
   "npcs": { "guard-aria": { "id": "guard-aria", "displayName": "Guard Aria", "position": { "x": 0, "y": 2 }, "questIds": ["slime-hunt"], "zoneId": "starter-plains", "interactionRange": 3 } },
   "zones": { "starter-plains": { "id": "starter-plains", "displayName": "Starter Plains", "capacity": 100 } },

@@ -75,4 +75,19 @@ public sealed class GameplayRulesTests
         var restored = MessagePackSerializer.Deserialize<RealtimeEnvelope>(MessagePackSerializer.Serialize(envelope));
         Assert.Equal(2, MessagePackSerializer.Deserialize<MoveCommand>(restored.Payload).X);
     }
+
+    [Fact]
+    public void Realtime_message_ids_remain_wire_compatible()
+    {
+        Assert.Equal(100, RealtimeMessageIds.Move);
+        Assert.Equal(101, RealtimeMessageIds.Attack);
+        Assert.Equal(102, RealtimeMessageIds.AcceptQuest);
+        Assert.Equal(103, RealtimeMessageIds.CompleteQuest);
+        Assert.Equal(104, RealtimeMessageIds.UseSkill);
+        Assert.Equal(105, RealtimeMessageIds.Equip);
+        Assert.Equal(106, RealtimeMessageIds.Unequip);
+        Assert.Equal(107, RealtimeMessageIds.InteractNpc);
+        Assert.Equal(200, RealtimeMessageIds.Snapshot);
+        Assert.Equal(900, RealtimeMessageIds.Error);
+    }
 }

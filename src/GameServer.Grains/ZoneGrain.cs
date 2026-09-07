@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using GameServer.Abstractions;
 using GameServer.Contracts;
 using GameServer.Domain.Gameplay;
 using GameServer.Grains.State;
@@ -16,7 +17,7 @@ public sealed class ZoneGrain(
     {
         await ReloadIfRequiredAsync();
         var logicalZoneId = LogicalZoneId();
-        var content = contentCatalog.GetVersion(contentVersion);
+        var content = contentCatalog.GetVersion(contentVersion).Content;
         if (!content.Zones.TryGetValue(logicalZoneId, out var definition)) throw new InvalidOperationException("Unknown zone.");
         // Zone 实例首次启用后固定内容版本，避免同一地图内玩家和怪物按不同配置结算。
         if (string.IsNullOrWhiteSpace(state.State.ContentVersion)) state.State.ContentVersion = contentVersion;
@@ -34,14 +35,14 @@ public sealed class ZoneGrain(
     {
         await ReloadIfRequiredAsync();
         if (!state.State.Players.TryGetValue(characterId, out var player) || string.IsNullOrWhiteSpace(state.State.ContentVersion)) return false;
-        var content = contentCatalog.GetVersion(state.State.ContentVersion);
+        var content = contentCatalog.GetVersion(state.State.ContentVersion).Content;
         return content.Npcs.TryGetValue(npcId, out var npc) && npc.ZoneId == LogicalZoneId() && player.DistanceTo(npc.Position) <= (float)npc.InteractionRange;
     }
     public async Task<AttackResult> AttackMonsterAsync(string characterId, string monsterId, decimal damage, decimal range, string operationId)
     {
         await ReloadIfRequiredAsync();
         if (!state.State.Players.TryGetValue(characterId, out var attacker)) return new AttackResult(false, "not_in_zone", false, null, 0, 0);
-        var content = contentCatalog.GetVersion(state.State.ContentVersion);
+        var content = contentCatalog.GetVersion(state.State.ContentVersion).Content;
         if (!content.Monsters.TryGetValue(monsterId, out var monster)) return new AttackResult(false, "unknown_target", false, null, 0, 0);
         var monsterGrain = GrainFactory.GetGrain<IMonsterGrain>(MonsterKey(monsterId));
         var target = await monsterGrain.GetSnapshotAsync();
@@ -58,13 +59,13 @@ public sealed class ZoneGrain(
     {
         await ReloadIfRequiredAsync();
         if (string.IsNullOrWhiteSpace(state.State.ContentVersion)) return new ZoneSnapshot(this.GetPrimaryKeyString(), string.Empty, []);
-        var content = contentCatalog.GetVersion(state.State.ContentVersion);
+        var content = contentCatalog.GetVersion(state.State.ContentVersion).Content;
         var monsters = await Task.WhenAll(content.Monsters.Keys.Select(id => GrainFactory.GetGrain<IMonsterGrain>(MonsterKey(id)).GetSnapshotAsync()));
         var players = state.State.Players.Select(x => new ZoneEntity(x.Key, "player", x.Value, 0, 0));
         var npcs = content.Npcs.Values.Where(x => x.ZoneId == LogicalZoneId()).Select(x => new ZoneEntity(x.Id, "npc", x.Position, 0, 0));
         return new ZoneSnapshot(this.GetPrimaryKeyString(), state.State.ContentVersion, players.Concat(monsters).Concat(npcs).ToArray());
     }
-    private async Task EnsureMonstersAsync() { var content = contentCatalog.GetVersion(state.State.ContentVersion); await Task.WhenAll(content.Monsters.Values.Select(monster => GrainFactory.GetGrain<IMonsterGrain>(MonsterKey(monster.Id)).InitializeAsync(monster))); }
+    private async Task EnsureMonstersAsync() { var content = contentCatalog.GetVersion(state.State.ContentVersion).Content; await Task.WhenAll(content.Monsters.Values.Select(monster => GrainFactory.GetGrain<IMonsterGrain>(MonsterKey(monster.Id)).InitializeAsync(monster))); }
     private IReadOnlyList<InventoryStack> ResolveDrops(GameContent content, MonsterDefinition monster, string operationId)
     {
         if (monster.DropTableId is not { } tableId || !content.DropTables.TryGetValue(tableId, out var table)) return [new InventoryStack(monster.DropItemId, monster.DropCount)];

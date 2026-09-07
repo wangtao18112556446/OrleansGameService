@@ -1,3 +1,4 @@
+using GameServer.Abstractions;
 using GameServer.Contracts;
 using GameServer.Domain.Attributes;
 using GameServer.Domain.Gameplay;
@@ -11,14 +12,14 @@ public sealed class CharacterGrain(
     [PersistentState("character", "gameStore")] IPersistentState<CharacterState> state,
     IGameContentCatalog contentCatalog,
     IRewardLedger rewardLedger,
-    GameFeatureRegistry features,
+    IGameplayFeatureCatalog features,
     TimeProvider timeProvider) : Grain, ICharacterGrain
 {
     public async Task InitializeAsync(string accountId, string name, string contentVersion, string classId)
     {
         await RecoverAsync();
         if (!string.IsNullOrEmpty(state.State.AccountId)) return;
-        var content = contentCatalog.GetVersion(contentVersion);
+        var content = contentCatalog.GetVersion(contentVersion).Content;
         if (!content.Classes.TryGetValue(classId, out var characterClass)) throw new InvalidOperationException("Unknown character class.");
         state.State.AccountId = accountId;
         state.State.Name = name;
@@ -41,7 +42,7 @@ public sealed class CharacterGrain(
 
     public async Task<CommandResult> EnterZoneAsync(string zoneId, string contentVersion)
     {
-        var content = contentCatalog.GetVersion(contentVersion);
+        var content = contentCatalog.GetVersion(contentVersion).Content;
         if (!content.Zones.ContainsKey(zoneId)) return Failure("invalid_zone");
         await RecoverAsync();
         var targetZoneId = ZoneKey(zoneId, contentVersion);
@@ -105,8 +106,12 @@ public sealed class CharacterGrain(
         var attributes = Attributes(content);
         state.State.PendingCombat = new PendingCombat
         {
-            OperationId = operationId, Fingerprint = fingerprint, MonsterId = command.TargetMonsterId,
-            Damage = attributes.Get("attack"), Range = attributes.Get("attackRange"), ExecutedAt = DateTimeOffset.UtcNow
+            OperationId = operationId,
+            Fingerprint = fingerprint,
+            MonsterId = command.TargetMonsterId,
+            Damage = attributes.Get("attack"),
+            Range = attributes.Get("attackRange"),
+            ExecutedAt = DateTimeOffset.UtcNow
         };
         await SaveAsync();
         await ResumeCombatAsync();
@@ -118,7 +123,8 @@ public sealed class CharacterGrain(
     {
         var fingerprint = OperationIdentity.Fingerprint("skill", command);
         if (await ReplayAsync(operationId, fingerprint) is { } replay) return replay;
-        var content = Content();
+        var contentVersion = ContentVersion();
+        var content = contentVersion.Content;
         if (!content.Skills.TryGetValue(command.SkillId, out var skill) || !state.State.LearnedSkillIds.Contains(skill.Id)) return Failure("unknown_skill");
         if (state.State.SkillCooldowns.TryGetValue(skill.Id, out var readyAt) && readyAt > DateTimeOffset.UtcNow) return Failure("skill_on_cooldown");
         if (skill.ResourceId is { } resource && state.State.Resources.GetValueOrDefault(resource) < skill.ResourceCost) return Failure("insufficient_resource");
@@ -132,7 +138,8 @@ public sealed class CharacterGrain(
         foreach (var effectId in skill.EffectIds.Count == 0 ? [skill.EffectId] : skill.EffectIds)
         {
             if (!content.Effects.TryGetValue(effectId, out var effect)) return Failure("unknown_effect");
-            var resolved = features.GetEffect(effect.Kind).Resolve(effect, new EffectContext(attrs, command.TargetMonsterId));
+            var effectType = BuiltInEffectTypes.Resolve(effect);
+            var resolved = features.GetEffect(effectType).Resolve(effect, new EffectContext(contentVersion, attrs, command.TargetMonsterId));
             damage += resolved.MonsterDamage;
             foreach (var change in resolved.ResourceChangesOrEmpty) resources[change.Key] = resources.GetValueOrDefault(change.Key) + change.Value;
             if (resolved.BuffId is { } buff) buffs.Add(buff);
@@ -144,9 +151,15 @@ public sealed class CharacterGrain(
             if (!InventoryRules.CanReceive(state.State.Inventory, PotentialDrops(content, monster), content.Items)) return Failure("inventory_full");
             state.State.PendingCombat = new PendingCombat
             {
-                OperationId = operationId, Fingerprint = fingerprint, MonsterId = command.TargetMonsterId,
-                Damage = damage, Range = attrs.GetValueOrDefault("attackRange", 3m), SkillId = skill.Id,
-                ExecutedAt = DateTimeOffset.UtcNow, ResourceChanges = resources, BuffIds = buffs
+                OperationId = operationId,
+                Fingerprint = fingerprint,
+                MonsterId = command.TargetMonsterId,
+                Damage = damage,
+                Range = attrs.GetValueOrDefault("attackRange", 3m),
+                SkillId = skill.Id,
+                ExecutedAt = DateTimeOffset.UtcNow,
+                ResourceChanges = resources,
+                BuffIds = buffs
             };
             await SaveAsync();
             await ResumeCombatAsync();
@@ -296,7 +309,8 @@ public sealed class CharacterGrain(
     }
     private static IEnumerable<InventoryStack> SplitStacks(string itemId, int quantity, int maxStack) { while (quantity > 0) { var amount = Math.Min(quantity, Math.Max(1, maxStack)); yield return new InventoryStack(itemId, amount); quantity -= amount; } }
     private IZoneGrain Zone() => GrainFactory.GetGrain<IZoneGrain>(state.State.ZoneId);
-    private GameContent Content() => contentCatalog.GetVersion(state.State.ContentVersion);
+    private GameContentVersion ContentVersion() => contentCatalog.GetVersion(state.State.ContentVersion);
+    private GameContent Content() => ContentVersion().Content;
     private static string ZoneKey(string zoneId, string contentVersion) => $"{zoneId}:{contentVersion}";
     private bool reloadRequired;
     private bool movementRuntimeInitialized;
@@ -346,7 +360,10 @@ public sealed class CharacterGrain(
         // 后续规模化时需先引入带服务端期限的操作协议，再安全归档这些紧凑回执。
         state.State.OperationReceipts[operationId] = new OperationReceipt
         {
-            Fingerprint = fingerprint, Attack = attack, Interaction = interaction, ErrorCode = error
+            Fingerprint = fingerprint,
+            Attack = attack,
+            Interaction = interaction,
+            ErrorCode = error
         };
     }
 

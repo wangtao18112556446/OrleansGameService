@@ -2,6 +2,10 @@ using GameServer.Contracts;
 
 namespace GameServer.Domain.Gameplay;
 
+/// <summary>描述领域规则是否允许当前行为及稳定错误码。</summary>
+public sealed record RuleDecision(bool Allowed, string? ErrorCode = null);
+
+/// <summary>提供不依赖基础设施的战斗合法性判定。</summary>
 public static class CombatRules
 {
     // 距离校验保留在纯领域层，使角色、区域等入口共享同一判定而不会产生规则漂移。
@@ -12,6 +16,7 @@ public static class CombatRules
 
 }
 
+/// <summary>维护任务接取、击杀推进和完成资格的确定性状态迁移。</summary>
 public static class QuestStateMachine
 {
     // 已完成任务不可被重新接受，避免后续奖励流程因重复接取而再次满足完成条件。

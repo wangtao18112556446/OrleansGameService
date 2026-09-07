@@ -7,10 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\GameServer.Abstractions\GameServer.Abstractions.csproj" />
     <ProjectReference Include="..\GameServer.Contracts\GameServer.Contracts.csproj" />
     <ProjectReference Include="..\GameServer.Domain\GameServer.Domain.csproj" />
     <ProjectReference Include="..\GameServer.Grains\GameServer.Grains.csproj" />
     <ProjectReference Include="..\GameServer.Infrastructure\GameServer.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\samples\GameServer.SampleGameplay\GameServer.SampleGameplay.csproj" />
   </ItemGroup>
 
 

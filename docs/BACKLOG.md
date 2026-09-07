@@ -16,6 +16,7 @@
 | NET-003 | P1 / L | 增量同步协议与重连 | NET-002 | 待拆分 |
 | DATA-001 | P1 / L | 操作回执期限与归档 | 协议设计，实施需 NET-003 | 待拆分 |
 | CONTENT-001 | P1 / L | 内容多节点准备、激活与恢复 | OPS-001 | 多节点验收前完成 |
+| EXT-001 | P1 / M | 编译期玩法模块、类型化内容节与强类型宿主配置 | 无 | 实现及本地验证完成；Compose 待 Docker |
 
 协议基线调整（2026-09-07）：项目尚未发布客户端，已删除实时协议的多版本分支、`ProtocolVersion` 和固定历史报文测试，统一使用完整角色快照及单一 `Snapshot` 响应。`dotnet build OrleansGameService.slnx --no-restore` 通过；`dotnet test OrleansGameService.slnx --no-restore` 为 32 通过、6 跳过、0 失败，跳过项需要 PostgreSQL 或 Gateway 集成环境。
 
@@ -58,6 +59,12 @@ ENG-002：确定 `global.json` 与 CI/Docker SDK 的一致策略，集中管理�
 交付：校验 JWT、持久化模式、连接配置和部署标识；区分存活/就绪，检查当前必需的 PostgreSQL、Orleans 和内容就绪状态。Redis 是否阻断就绪按实际用途确定；配置导出端与业务指标，包含命令耗时/拒绝、恢复失败、待投递数量和最老记录年龄。
 
 验收：错误生产配置启动失败；必要依赖失效时就绪失败、恢复后恢复；日志包含请求关联但不包含令牌、密码或连接密钥；能观察到一条失败命令和一次奖励重投。交付配置表和故障定位步骤。
+
+## EXT-001：编译期模块与配置基座
+
+实施记录（2026-09-07）：新增只依赖 Contracts 的 `GameServer.Abstractions`，通过 `GameServerBuilder` 显式注册模块依赖、效果、类型化内容节与校验器；效果目录运行期只读，旧 `EffectKind` 映射保持兼容。示例 `sample.vampirism` 项目不依赖 Gateway、Grains 或 Infrastructure。宿主 JWT、Orleans、实时消息上限、限流和启动内容路径改用 Options 并在启动时校验；现有 HTTP/WebSocket、Grain 接口与状态结构未改动，也未新增数据库迁移。
+
+本地 `dotnet build OrleansGameService.slnx --no-restore` 通过且无警告；`dotnet test OrleansGameService.slnx --no-restore` 为 50 通过、6 跳过、0 失败。`pwsh -File scripts/Test-Integration.ps1` 已尝试，但当前环境仍缺少 `docker` 命令，因此 PostgreSQL、真实 Gateway 和重启验证未执行。模块用法见[模块开发指南](guides/modules.md)，配置表见[运行配置](operations/configuration.md)，决策见 [ADR 0002](adr/0002-compile-time-modules.md)。
 
 ## 后续大任务拆分要求
 

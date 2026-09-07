@@ -87,6 +87,7 @@ public sealed record MonsterDefinition(string Id, string DisplayName, decimal He
 public sealed record QuestDefinition(string Id, string NpcId, string TargetMonsterId, int RequiredKills, string RewardItemId, int RewardCount);
 public enum EffectKind { DamageMonster, RestoreResource, ConsumeResource, ApplyBuff }
 
+/// <summary>定义内容中的效果参数，并通过可选 TypeId 接入编译期扩展模块。</summary>
 [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.EffectDefinition")]
 public sealed record EffectDefinition(string Id, EffectKind Kind, decimal Amount = 0m)
@@ -95,6 +96,8 @@ public sealed record EffectDefinition(string Id, EffectKind Kind, decimal Amount
     public string? BuffId { get; init; }
     public string? ScalingAttributeId { get; init; }
     public decimal ScalingFactor { get; init; }
+    /// <summary>指定可扩展效果实现；为空时按兼容的 Kind 映射内置实现。</summary>
+    public string? TypeId { get; init; }
 }
 
 /// <summary>定义角色移动速度以及服务器最多允许累积的移动时间预算。</summary>
@@ -119,33 +122,40 @@ public sealed record GameContent(string Version, IReadOnlyDictionary<string, Att
     public MovementDefinition Movement { get; init; } = new(6f, TimeSpan.FromSeconds(2));
 }
 
-public interface IGameContentCatalog { GameContent GetVersion(string version); GameContent GetActive(); void Activate(GameContent content); IReadOnlyList<GameContent> GetAll(); }
-
-[MessagePackObject] [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+[MessagePackObject]
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.InventoryStack")]
 public sealed record InventoryStack([property: Key(0)] string ItemId, [property: Key(1)] int Quantity);
-[MessagePackObject] [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+[MessagePackObject]
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.QuestProgress")]
 public sealed record QuestProgress([property: Key(0)] string QuestId, [property: Key(1)] int Progress, [property: Key(2)] bool IsAccepted, [property: Key(3)] bool IsCompleted);
 /// <summary>提供角色的完整对外状态，包括基础数据、资源、装备、Buff 与技能。</summary>
-[MessagePackObject] [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+[MessagePackObject]
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.CharacterSnapshot")]
 public sealed record CharacterSnapshot([property: Key(0)] string CharacterId, [property: Key(1)] string AccountId, [property: Key(2)] string Name, [property: Key(3)] string ZoneId, [property: Key(4)] string ContentVersion, [property: Key(5)] WorldPosition Position, [property: Key(6)] int Level, [property: Key(7)] IReadOnlyDictionary<string, decimal> Attributes, [property: Key(8)] IReadOnlyList<InventoryStack> Inventory, [property: Key(9)] IReadOnlyList<QuestProgress> Quests, [property: Key(10)] string ClassId, [property: Key(11)] IReadOnlyDictionary<string, decimal> Resources, [property: Key(12)] IReadOnlyList<EquippedItem> Equipment, [property: Key(13)] IReadOnlyList<ActiveBuff> Buffs, [property: Key(14)] IReadOnlyList<string> Skills);
-[MessagePackObject] [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+[MessagePackObject]
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.EquippedItem")]
 public sealed record EquippedItem([property: Key(0)] string SlotId, [property: Key(1)] string ItemId);
-[MessagePackObject] [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+[MessagePackObject]
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.ActiveBuff")]
 public sealed record ActiveBuff([property: Key(0)] string BuffId, [property: Key(1)] DateTimeOffset ExpiresAt);
-[MessagePackObject] [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+[MessagePackObject]
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.ZoneEntity")]
 public sealed record ZoneEntity([property: Key(0)] string EntityId, [property: Key(1)] string Kind, [property: Key(2)] WorldPosition Position, [property: Key(3)] decimal Health, [property: Key(4)] decimal MaxHealth);
-[MessagePackObject] [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+[MessagePackObject]
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.ZoneSnapshot")]
 public sealed record ZoneSnapshot([property: Key(0)] string ZoneId, [property: Key(1)] string ContentVersion, [property: Key(2)] IReadOnlyList<ZoneEntity> Entities);
-[MessagePackObject] [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+[MessagePackObject]
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.NpcInteraction")]
 public sealed record NpcInteraction([property: Key(0)] string NpcId, [property: Key(1)] IReadOnlyList<string> OfferedQuestIds, [property: Key(2)] IReadOnlyList<string> ReadyQuestIds);
+
 [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.AttackResult")]
 public sealed record AttackResult(bool Accepted, string? ErrorCode, bool TargetDefeated, string? RewardItemId, int RewardCount, decimal TargetHealth) { public IReadOnlyList<InventoryStack> Rewards { get; init; } = []; }
@@ -166,4 +176,3 @@ public sealed record CommandResult(bool Succeeded, string? ErrorCode, CharacterS
 [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 [Alias("GameServer.Contracts.RewardGrant")]
 public sealed record RewardGrant(string ItemId, int Quantity);
-public interface IRewardLedger { Task<bool> TryRecordAsync(string characterId, string operationId, string kind, IReadOnlyList<RewardGrant> rewards, CancellationToken cancellationToken = default); }

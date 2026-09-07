@@ -9,6 +9,7 @@
 - 一个方法表达一个业务步骤；同一行不堆放多个公开成员或复杂分支。命名优先描述业务，不用 `Manager`/`Helper` 隐藏无关职责。
 - 纯规则接收显式输入并返回结果；时间、随机、IO 由运行层注入或传入。异步 IO 全程 await，不使用 `.Result`/`.Wait()` 阻塞请求，也不通过 `Task.Run` 脱离 Grain 调度修改状态。
 - 新抽象需说明变化点、调用者和测试方式；优先复用内置 DI/Options/日志等设施。模式选型见 [架构](ARCHITECTURE.md)，不强制每层都建立 Repository、Service 和工厂。
+- `GameServer.Abstractions` 只允许依赖 Contracts；独立玩法模块只引用 Abstractions/Contracts，不得反向依赖 Gateway、Grains 或 Infrastructure。模块接入规则见[模块开发指南](guides/modules.md)。
 
 ## 一致性与兼容性
 
