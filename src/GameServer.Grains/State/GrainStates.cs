@@ -2,7 +2,11 @@ using GameServer.Contracts;
 
 namespace GameServer.Grains.State;
 
-public sealed class AccountState { public List<CharacterSummary> Characters { get; set; } = []; }
+public sealed class AccountState
+{
+    public List<CharacterSummary> Characters { get; set; } = [];
+}
+
 public sealed class CharacterState
 {
     public string AccountId { get; set; } = string.Empty;
@@ -23,5 +27,16 @@ public sealed class CharacterState
     public HashSet<string> ProcessedOperationIds { get; set; } = new(StringComparer.Ordinal);
     public DateTimeOffset? LastAttackAt { get; set; }
 }
-public sealed class ZoneState { public string ContentVersion { get; set; } = string.Empty; public Dictionary<string, WorldPosition> Players { get; set; } = new(StringComparer.Ordinal); }
-public sealed class MonsterState { public MonsterDefinition? Definition { get; set; } public decimal Health { get; set; } public DateTimeOffset? RespawnAt { get; set; } public HashSet<string> ProcessedOperationIds { get; set; } = new(StringComparer.Ordinal); public Dictionary<string, AttackResult> OperationResults { get; set; } = new(StringComparer.Ordinal); }
+
+public sealed class ZoneState
+{
+    public string ContentVersion { get; set; } = string.Empty; public Dictionary<string, WorldPosition> Players { get; set; } = new(StringComparer.Ordinal);
+}
+public sealed class MonsterState
+{
+    public MonsterDefinition? Definition { get; set; }
+    public decimal Health { get; set; }
+    public DateTimeOffset? RespawnAt { get; set; }
+    public HashSet<string> ProcessedOperationIds { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, AttackResult> OperationResults { get; set; } = new(StringComparer.Ordinal);
+}

@@ -9,7 +9,7 @@ namespace GameServer.Infrastructure.Content;
 
 public sealed class JsonGameContentCatalog : IGameContentCatalog
 {
-    private readonly object sync = new();
+    private readonly Lock sync = new();
     private readonly Dictionary<string, GameContent> versions = new(StringComparer.Ordinal);
     private GameContent active;
     public JsonGameContentCatalog(IHostEnvironment environment)
@@ -21,7 +21,13 @@ public sealed class JsonGameContentCatalog : IGameContentCatalog
     }
     public GameContent GetVersion(string version) { lock (sync) return versions.TryGetValue(version, out var content) ? content : throw new InvalidOperationException($"Content version '{version}' is not available."); }
     public GameContent GetActive() { lock (sync) return active; }
-    public IReadOnlyList<GameContent> GetAll() { lock (sync) return versions.Values.ToArray(); }
+    public IReadOnlyList<GameContent> GetAll() 
+    { 
+        lock (sync) 
+        {
+            return [.. versions.Values];
+        }
+    }
     public void Activate(GameContent content)
     {
         Validate(content);
@@ -114,7 +120,26 @@ public sealed class ContentCatalogLoader(IDbContextFactory<GameDbContext> databa
 
 public static class GameContentDefaults
 {
-    public static GameContent Create() => new GameContent("v1", new Dictionary<string, AttributeDefinition>(StringComparer.Ordinal) { ["health"] = new("health", 100, 1), ["attack"] = new("attack", 25, 0), ["attackRange"] = new("attackRange", 3, 1, 8) }, new Dictionary<string, ItemDefinition>(StringComparer.Ordinal) { ["slime-gel"] = new("slime-gel", "Slime Gel"), ["traveler-token"] = new("traveler-token", "Traveler Token") }, new Dictionary<string, MonsterDefinition>(StringComparer.Ordinal) { ["green-slime"] = new("green-slime", "Green Slime", 50, 8, new WorldPosition(4, 0), "slime-gel", 1) }, new Dictionary<string, QuestDefinition>(StringComparer.Ordinal) { ["slime-hunt"] = new("slime-hunt", "guard-aria", "green-slime", 1, "traveler-token", 1) })
+    public static GameContent Create() => new("v1",
+        new Dictionary<string, AttributeDefinition>(StringComparer.Ordinal)
+        {
+            ["health"] = new("health", 100, 1),
+            ["attack"] = new("attack", 25, 0),
+            ["attackRange"] = new("attackRange", 3, 1, 8)
+        },
+        new Dictionary<string, ItemDefinition>(StringComparer.Ordinal)
+        {
+            ["slime-gel"] = new("slime-gel", "Slime Gel"),
+            ["traveler-token"] = new("traveler-token", "Traveler Token")
+        },
+        new Dictionary<string, MonsterDefinition>(StringComparer.Ordinal)
+        {
+            ["green-slime"] = new("green-slime", "Green Slime", 50, 8, new WorldPosition(4, 0), "slime-gel", 1)
+        },
+        new Dictionary<string, QuestDefinition>(StringComparer.Ordinal)
+        {
+            ["slime-hunt"] = new("slime-hunt", "guard-aria", "green-slime", 1, "traveler-token", 1)
+        })
     {
         Classes = new Dictionary<string, CharacterClassDefinition> { ["adventurer"] = new("adventurer", "Adventurer", new Dictionary<string, decimal>()) { InitialSkillIds = ["basic-attack"] } },
         Resources = new Dictionary<string, ResourceDefinition> { ["health"] = new("health", "Health", "health") { InitialValue = 100 } },
