@@ -11,26 +11,56 @@ public static class WebSocketGameEndpoint
 {
     public static async Task HandleAsync(HttpContext context)
     {
-        if (!context.WebSockets.IsWebSocketRequest) { context.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
+        if (!context.WebSockets.IsWebSocketRequest)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+
         var characterId = context.Request.Query["characterId"].ToString();
         var accountId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrWhiteSpace(characterId) || string.IsNullOrWhiteSpace(accountId)) { context.Response.StatusCode = StatusCodes.Status401Unauthorized; return; }
+        if (string.IsNullOrWhiteSpace(characterId) || string.IsNullOrWhiteSpace(accountId))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
         var grains = context.RequestServices.GetRequiredService<IGrainFactory>();
         // 连接建立前验证角色归属，不能把 query string 中的 characterId 当作授权依据。
-        if (!await grains.GetGrain<IAccountGrain>(accountId).OwnsCharacterAsync(characterId)) { context.Response.StatusCode = StatusCodes.Status403Forbidden; return; }
+        if (!await grains.GetGrain<IAccountGrain>(accountId).OwnsCharacterAsync(characterId))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+
         var character = grains.GetGrain<ICharacterGrain>(characterId);
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         while (socket.State == WebSocketState.Open)
         {
             byte[]? bytes;
-            try { bytes = await ReceiveAsync(socket, context.RequestAborted); }
-            catch (InvalidOperationException) { await SendErrorAsync(socket, "message_too_large", "WebSocket message exceeds 64 KiB.", context.RequestAborted); break; }
+            try
+            {
+                bytes = await ReceiveAsync(socket, context.RequestAborted);
+            }
+            catch (InvalidOperationException)
+            {
+                await SendErrorAsync(socket, "message_too_large", "WebSocket message exceeds 64 KiB.", context.RequestAborted);
+                break;
+            }
+
             if (bytes is null) break;
+
             RealtimeEnvelope incoming;
             try { incoming = MessagePackSerializer.Deserialize<RealtimeEnvelope>(bytes); }
             catch (Exception) { await SendErrorAsync(socket, "invalid_envelope", "The binary envelope is invalid.", context.RequestAborted); continue; }
+
             // 先拒绝未知协议版本，避免把新版本消息按旧版 MessagePack 形状错误反序列化。
-            if (incoming.ProtocolVersion is not (1 or 2)) { await SendErrorAsync(socket, "unsupported_protocol", "Only protocol versions 1 and 2 are supported.", context.RequestAborted); continue; }
+            if (incoming.ProtocolVersion is not (1 or 2))
+            {
+                await SendErrorAsync(socket, "unsupported_protocol", "Only protocol versions 1 and 2 are supported.", context.RequestAborted);
+                continue;
+            }
+
             CommandResult result;
             try { result = await DispatchAsync(character, incoming); }
             catch (MessagePackSerializationException) { await SendErrorAsync(socket, "invalid_command", "The command payload is invalid.", context.RequestAborted, incoming.RequestId, incoming.OperationId, incoming.ProtocolVersion); continue; }
