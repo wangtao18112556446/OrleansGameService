@@ -1,6 +1,18 @@
 # Orleans MMO Game Service
 
-`net10.0` MMO 服务端 MVP。HTTP 提供本地账号和角色接口，WebSocket 使用 MessagePack 发送服务器权威的实时指令；Orleans 管理账号、角色、区域和怪物 Grain。
+项目目标是基于 Orleans 构建开源、通用、可扩展的 MMORPG 服务端框架，让不同游戏复用在线状态管理、通信、持久化和运行基础设施，并按需组合玩法模块。
+
+当前处于 `net10.0` MMO 服务端 MVP 阶段，尚未达到通用框架的发行标准。HTTP 提供本地账号和角色接口，WebSocket 使用 MessagePack 发送服务器权威的实时指令；Orleans 管理账号、角色、区域和怪物 Grain。
+
+## 项目规划与文档
+
+- [文档导航](docs/README.md)：当前能力、架构、开发与运维资料入口。
+- [开发路线与功能清单](docs/ROADMAP.md)：阶段依赖、范围及验收条件。
+- [近期开发待办](docs/BACKLOG.md)：可直接拆成 Issue 的任务与验证要求。
+- [架构与扩展原则](docs/ARCHITECTURE.md)：状态归属、模块职责及设计模式选择。
+- [工程规范](docs/ENGINEERING.md)与[贡献指南](CONTRIBUTING.md)：开发、测试、文档和发布要求。
+
+优先采用“通用核心 + 可选玩法模块 + 示例游戏”的演进方向。新能力需同时交付实现、针对性测试和对应文档；公共协议、持久化状态和跨 Grain 一致性变更需要记录设计取舍。开源许可证尚待确定，当前没有声明可再分发的开源授权。
 
 ## Run
 
@@ -49,4 +61,4 @@ pwsh -File scripts/Test-Integration.ps1
 
 集成脚本启动独立 `orleans-game-tests` Compose 项目，使用 PostgreSQL `15432`、Redis `16379` 和 Gateway `18080` 端口。它验证迁移及账本并发，执行注册、登录、创建角色、入区、接任务、击杀、领奖，再重启 Gateway 验证账号、角色状态和操作回执，最后重跑 Orleans 初始化。测试账号暂存在被 Git 忽略的 `TestResults/smoke-state.json`，CI 不上传该文件。完成后可用 `docker compose -p orleans-game-tests down` 停止测试实例，保留测试数据卷。
 
-GitHub Actions 执行构建、单元/Grain 测试和完整 Compose 验证，并保存测试报告与容器日志。后续迭代顺序为：按服务端时间校验移动及补齐交互约束 → 会话、断线恢复和多人广播 → 怪物 AI、成长、内容多节点同步与容量验证。
+GitHub Actions 已配置构建、单元/Grain 测试和完整 Compose 验证，并保存测试报告与容器日志；具体执行结果以对应 CI 记录为准。后续迭代及验收要求统一维护在[开发路线](docs/ROADMAP.md)和[近期待办](docs/BACKLOG.md)。
