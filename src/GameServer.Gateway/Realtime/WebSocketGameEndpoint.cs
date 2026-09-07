@@ -6,6 +6,7 @@ using Orleans;
 
 namespace GameServer.Gateway.Realtime;
 
+/// <summary>验证角色会话并分发版本化二进制命令，区分报文错误和可重试的服务端故障。</summary>
 public static class WebSocketGameEndpoint
 {
     public static async Task HandleAsync(HttpContext context)
@@ -32,7 +33,14 @@ public static class WebSocketGameEndpoint
             if (incoming.ProtocolVersion is not (1 or 2)) { await SendErrorAsync(socket, "unsupported_protocol", "Only protocol versions 1 and 2 are supported.", context.RequestAborted); continue; }
             CommandResult result;
             try { result = await DispatchAsync(character, incoming); }
-            catch (Exception) { await SendErrorAsync(socket, "invalid_command", "The command payload is invalid.", context.RequestAborted); continue; }
+            catch (MessagePackSerializationException) { await SendErrorAsync(socket, "invalid_command", "The command payload is invalid.", context.RequestAborted, incoming.RequestId, incoming.OperationId, incoming.ProtocolVersion); continue; }
+            catch (Exception exception)
+            {
+                context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Realtime")
+                    .LogError(exception, "Command {MessageId} failed for character {CharacterId}, request {RequestId}", incoming.MessageId, characterId, incoming.RequestId);
+                await SendErrorAsync(socket, "server_error", "Retry with the same operation id.", context.RequestAborted, incoming.RequestId, incoming.OperationId, incoming.ProtocolVersion);
+                continue;
+            }
             await SendResultAsync(socket, grains, incoming, result, context.RequestAborted);
         }
     }

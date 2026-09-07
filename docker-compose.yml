@@ -5,7 +5,7 @@ services:
       POSTGRES_DB: orleans_game
       POSTGRES_USER: game
       POSTGRES_PASSWORD: game
-    ports: ["5432:5432"]
+    ports: ["${GAME_POSTGRES_PORT:-5432}:5432"]
     volumes: ["postgres-data:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U game -d orleans_game"]
@@ -14,7 +14,7 @@ services:
       retries: 20
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    ports: ["${GAME_REDIS_PORT:-6379}:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -22,19 +22,14 @@ services:
       retries: 20
   orleans-schema:
     image: postgres:17-alpine
-    entrypoint: ["/bin/sh", "-ec"]
-    command: |
-      apk add --no-cache curl
-      for file in PostgreSQL-Main.sql PostgreSQL-Clustering.sql PostgreSQL-Persistence.sql; do
-        case "$$file" in
-          PostgreSQL-Main.sql) path="src/AdoNet/Shared/$$file" ;;
-          PostgreSQL-Clustering.sql) path="src/AdoNet/Orleans.Clustering.AdoNet/$$file" ;;
-          *) path="src/AdoNet/Orleans.Persistence.AdoNet/$$file" ;;
-        esac
-        curl --fail --location --retry 8 "https://raw.githubusercontent.com/dotnet/orleans/v10.2.1/$$path" | psql "$$POSTGRES_CONNECTION"
-      done
+    entrypoint: ["/bin/sh", "/scripts/orleans-schema.sh"]
+    volumes: ["./docker/orleans-schema.sh:/scripts/orleans-schema.sh:ro"]
     environment:
-      POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=orleans_game;Username=game;Password=game
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: orleans_game
+      PGUSER: game
+      PGPASSWORD: game
     depends_on:
       postgres: { condition: service_healthy }
   gateway:
@@ -46,7 +41,7 @@ services:
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=orleans_game;Username=game;Password=game
       ConnectionStrings__Redis: redis:6379
       Jwt__SigningKey: replace-this-production-jwt-signing-key-with-a-secret-value
-    ports: ["8080:8080"]
+    ports: ["${GAME_GATEWAY_PORT:-8080}:8080"]
     depends_on:
       orleans-schema: { condition: service_completed_successfully }
       redis: { condition: service_healthy }

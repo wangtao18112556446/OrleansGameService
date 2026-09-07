@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GameServer.Infrastructure.Persistence;
 
+/// <summary>映射账号、内容版本和奖励审计相关业务表。</summary>
 public sealed class GameDbContext(DbContextOptions<GameDbContext> options) : IdentityDbContext<IdentityUser>(options)
 {
     public DbSet<ContentReleaseEntity> ContentReleases => Set<ContentReleaseEntity>();
@@ -24,6 +25,7 @@ public sealed class GameDbContext(DbContextOptions<GameDbContext> options) : Ide
     }
 }
 
+/// <summary>保存不可覆盖的内容发布版本及导入审计信息。</summary>
 public sealed class ContentReleaseEntity
 {
     public required string Version { get; set; }
@@ -32,12 +34,14 @@ public sealed class ContentReleaseEntity
     public DateTimeOffset ImportedAt { get; set; }
 }
 
+/// <summary>记录全局当前激活的内容版本。</summary>
 public sealed class ContentSettingsEntity
 {
     public int Id { get; set; }
     public required string ActiveVersion { get; set; }
 }
 
+/// <summary>记录按角色隔离的奖励操作，作为持久化去重依据。</summary>
 public sealed class RewardOperationEntity
 {
     public required string OperationId { get; set; }
@@ -46,6 +50,7 @@ public sealed class RewardOperationEntity
     public DateTimeOffset CreatedAt { get; set; }
 }
 
+/// <summary>保存每次奖励操作的物品明细。</summary>
 public sealed class LedgerEntry
 {
     public long Id { get; set; }
@@ -57,6 +62,7 @@ public sealed class LedgerEntry
     public DateTimeOffset CreatedAt { get; set; }
 }
 
+/// <summary>保存角色累计获得的奖励量，用于审计，不代表当前可用背包。</summary>
 public sealed class PlayerItemProjection
 {
     public required string CharacterId { get; set; }

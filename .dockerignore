@@ -1,0 +1,9 @@
+.git
+.agents
+.codex
+.dotnet-cli
+.vs
+**/bin
+**/obj
+**/TestResults
+**/*.log
