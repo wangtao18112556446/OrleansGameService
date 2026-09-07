@@ -1,6 +1,6 @@
 # 实时协议错误码
 
-V1/V2 WebSocket 失败响应使用 `RealtimeEnvelope` 包装 `ErrorPayload`。能够解析原请求时，响应会回传原 `RequestId`、`OperationId` 和 `ProtocolVersion`。
+WebSocket 失败响应使用 `RealtimeEnvelope` 包装 `ErrorPayload`。能够解析原请求时，响应会回传原 `RequestId` 和 `OperationId`。
 
 ## 操作号与重试
 
@@ -24,14 +24,13 @@ V1/V2 WebSocket 失败响应使用 `RealtimeEnvelope` 包装 `ErrorPayload`。�
 
 移动预算及生命周期语义见[服务器权威移动](../gameplay/movement.md)。
 
-## 报文与版本
+## 报文
 
 | 错误码 | 说明 |
 | --- | --- |
 | `message_too_large` | 完整 WebSocket 消息超过 64 KiB，服务端发送错误后结束连接 |
 | `invalid_envelope` | 二进制外层无法反序列化为 `RealtimeEnvelope` |
-| `unsupported_protocol` | 当前只接受协议 V1/V2 |
 | `invalid_command` | 命令载荷与消息编号要求的 MessagePack 类型不匹配 |
-| `unknown_message` | 协议版本已知，但消息编号在该版本中不可用 |
+| `unknown_message` | 消息编号不在当前协议中 |
 
 其他玩法拒绝仍通过相同 `ErrorPayload` 返回；随着 `GAME-002` 等任务完成，本表继续补齐稳定含义和重试建议。

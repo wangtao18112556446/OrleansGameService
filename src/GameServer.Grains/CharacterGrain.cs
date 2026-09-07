@@ -38,7 +38,6 @@ public sealed class CharacterGrain(
     }
 
     public async Task<CharacterSnapshot> GetSnapshotAsync() { await RecoverAsync(); return Snapshot(); }
-    public async Task<CharacterSnapshotV2> GetSnapshotV2Async() { await RecoverAsync(); return SnapshotV2(); }
 
     public async Task<CommandResult> EnterZoneAsync(string zoneId, string contentVersion)
     {
@@ -278,12 +277,22 @@ public sealed class CharacterGrain(
         var content = Content(); NormalizeResources(content);
         var attributes = Attributes(content);
         var inventory = state.State.Inventory.SelectMany(x => SplitStacks(x.Key, x.Value, content.Items.GetValueOrDefault(x.Key)?.MaxStack ?? 1)).ToArray();
-        return new CharacterSnapshot(this.GetPrimaryKeyString(), state.State.AccountId, state.State.Name, state.State.ZoneId, state.State.ContentVersion, state.State.Position, state.State.Level, attributes.Snapshot(), inventory, state.State.Quests.Values.ToArray());
-    }
-    private CharacterSnapshotV2 SnapshotV2()
-    {
-        var snapshot = Snapshot();
-        return new CharacterSnapshotV2(snapshot, state.State.ClassId, new Dictionary<string, decimal>(state.State.Resources), state.State.EquippedItems.Select(x => new EquippedItem(x.Key, x.Value)).ToArray(), state.State.ActiveBuffs.Select(x => new ActiveBuff(x.Key, x.Value)).ToArray(), state.State.LearnedSkillIds.ToArray());
+        return new CharacterSnapshot(
+            this.GetPrimaryKeyString(),
+            state.State.AccountId,
+            state.State.Name,
+            state.State.ZoneId,
+            state.State.ContentVersion,
+            state.State.Position,
+            state.State.Level,
+            attributes.Snapshot(),
+            inventory,
+            state.State.Quests.Values.ToArray(),
+            state.State.ClassId,
+            new Dictionary<string, decimal>(state.State.Resources),
+            state.State.EquippedItems.Select(x => new EquippedItem(x.Key, x.Value)).ToArray(),
+            state.State.ActiveBuffs.Select(x => new ActiveBuff(x.Key, x.Value)).ToArray(),
+            state.State.LearnedSkillIds.ToArray());
     }
     private static IEnumerable<InventoryStack> SplitStacks(string itemId, int quantity, int maxStack) { while (quantity > 0) { var amount = Math.Min(quantity, Math.Max(1, maxStack)); yield return new InventoryStack(itemId, amount); quantity -= amount; } }
     private IZoneGrain Zone() => GrainFactory.GetGrain<IZoneGrain>(state.State.ZoneId);
@@ -501,6 +510,6 @@ public sealed class CharacterGrain(
         runtimeApprovedMoveOperationId = null;
     }
 
-    private CommandResult Success(AttackResult? attack = null, NpcInteraction? interaction = null) => new(true, null, Snapshot(), attack) { SnapshotV2 = SnapshotV2(), Interaction = interaction };
-    private CommandResult Failure(string code, AttackResult? attack = null) => new(false, code, Snapshot(), attack) { SnapshotV2 = SnapshotV2() };
+    private CommandResult Success(AttackResult? attack = null, NpcInteraction? interaction = null) => new(true, null, Snapshot(), attack) { Interaction = interaction };
+    private CommandResult Failure(string code, AttackResult? attack = null) => new(false, code, Snapshot(), attack);
 }

@@ -29,28 +29,28 @@ public sealed class GatewaySmokeTests
         Assert.True((await entered.Content.ReadFromJsonAsync<CommandResult>())!.Succeeded);
         Assert.Equal(HttpStatusCode.Forbidden, (await http.GetAsync("/api/characters/not-owned")).StatusCode);
         using var socket = await ConnectAsync(http, account.CharacterId);
-        var moved = await SendAsync(socket, RealtimeMessageIds.Move, new MoveCommand { X = 2, Y = 0 }, "move", 1);
+        var moved = await SendAsync(socket, RealtimeMessageIds.Move, new MoveCommand { X = 2, Y = 0 }, "move");
         Assert.Equal(RealtimeMessageIds.Snapshot, moved.MessageId);
         Assert.Equal(2, MessagePackSerializer.Deserialize<CharacterSnapshotPayload>(moved.Payload).Character.Position.X);
         // 重复运行独立测试项目时，上一轮击杀的怪物可能仍在重生窗口。
         for (var attempt = 0; attempt < 35 && MessagePackSerializer.Deserialize<CharacterSnapshotPayload>(moved.Payload).Zone.Entities.Single(x => x.EntityId == "green-slime").Health == 0; attempt++)
         {
             await Task.Delay(TimeSpan.FromSeconds(1));
-            moved = await SendAsync(socket, RealtimeMessageIds.Move, new MoveCommand { X = 2, Y = 0 }, "move", 1);
+            moved = await SendAsync(socket, RealtimeMessageIds.Move, new MoveCommand { X = 2, Y = 0 }, "move");
         }
         Assert.Equal(50, MessagePackSerializer.Deserialize<CharacterSnapshotPayload>(moved.Payload).Zone.Entities.Single(x => x.EntityId == "green-slime").Health);
-        Assert.Equal(RealtimeMessageIds.SnapshotV2, (await SendAsync(socket, RealtimeMessageIds.AcceptQuest, new QuestCommand { QuestId = "slime-hunt", NpcId = "guard-aria" }, "accept")).MessageId);
-        Assert.Equal(RealtimeMessageIds.SnapshotV2, (await SendAsync(socket, RealtimeMessageIds.Attack, new AttackCommand { TargetMonsterId = "green-slime" }, "hit")).MessageId);
-        Assert.Equal(RealtimeMessageIds.SnapshotV2, (await SendAsync(socket, RealtimeMessageIds.UseSkill, new UseSkillCommand { SkillId = "power-strike", TargetMonsterId = "green-slime" }, "kill")).MessageId);
+        Assert.Equal(RealtimeMessageIds.Snapshot, (await SendAsync(socket, RealtimeMessageIds.AcceptQuest, new QuestCommand { QuestId = "slime-hunt", NpcId = "guard-aria" }, "accept")).MessageId);
+        Assert.Equal(RealtimeMessageIds.Snapshot, (await SendAsync(socket, RealtimeMessageIds.Attack, new AttackCommand { TargetMonsterId = "green-slime" }, "hit")).MessageId);
+        Assert.Equal(RealtimeMessageIds.Snapshot, (await SendAsync(socket, RealtimeMessageIds.UseSkill, new UseSkillCommand { SkillId = "power-strike", TargetMonsterId = "green-slime" }, "kill")).MessageId);
         var completed = await SendAsync(socket, RealtimeMessageIds.CompleteQuest, new QuestCommand { QuestId = "slime-hunt", NpcId = "guard-aria" }, "complete");
-        Assert.Equal(RealtimeMessageIds.SnapshotV2, completed.MessageId);
-        AssertRewards(MessagePackSerializer.Deserialize<CharacterSnapshotPayloadV2>(completed.Payload).Character.Character);
+        Assert.Equal(RealtimeMessageIds.Snapshot, completed.MessageId);
+        AssertRewards(MessagePackSerializer.Deserialize<CharacterSnapshotPayload>(completed.Payload).Character);
         var duplicate = await SendAsync(socket, RealtimeMessageIds.CompleteQuest, new QuestCommand { QuestId = "slime-hunt", NpcId = "guard-aria" }, "complete");
-        AssertRewards(MessagePackSerializer.Deserialize<CharacterSnapshotPayloadV2>(duplicate.Payload).Character.Character);
+        AssertRewards(MessagePackSerializer.Deserialize<CharacterSnapshotPayload>(duplicate.Payload).Character);
         var invalid = await SendAsync(socket, RealtimeMessageIds.Move, new MoveCommand { X = 3, Y = 0 }, "move");
         Assert.Equal("operation_conflict", MessagePackSerializer.Deserialize<ErrorPayload>(invalid.Payload).Code);
-        var unsupported = await SendAsync(socket, RealtimeMessageIds.Move, new MoveCommand { X = 2, Y = 0 }, "future", 99);
-        Assert.Equal("unsupported_protocol", MessagePackSerializer.Deserialize<ErrorPayload>(unsupported.Payload).Code);
+        var unknown = await SendAsync(socket, 999, new MoveCommand { X = 2, Y = 0 }, "unknown");
+        Assert.Equal("unknown_message", MessagePackSerializer.Deserialize<ErrorPayload>(unknown.Payload).Code);
         var path = StatePath();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(account));
@@ -67,8 +67,8 @@ public sealed class GatewaySmokeTests
         AssertRewards(snapshot!);
         using var socket = await ConnectAsync(http, account.CharacterId);
         var replay = await SendAsync(socket, RealtimeMessageIds.CompleteQuest, new QuestCommand { QuestId = "slime-hunt", NpcId = "guard-aria" }, "complete");
-        Assert.Equal(RealtimeMessageIds.SnapshotV2, replay.MessageId);
-        AssertRewards(MessagePackSerializer.Deserialize<CharacterSnapshotPayloadV2>(replay.Payload).Character.Character);
+        Assert.Equal(RealtimeMessageIds.Snapshot, replay.MessageId);
+        AssertRewards(MessagePackSerializer.Deserialize<CharacterSnapshotPayload>(replay.Payload).Character);
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
 
@@ -96,11 +96,11 @@ public sealed class GatewaySmokeTests
         await socket.ConnectAsync(uri.Uri, timeout.Token);
         return socket;
     }
-    private static async Task<RealtimeEnvelope> SendAsync<T>(ClientWebSocket socket, int messageId, T command, string operationId, int version = 2)
+    private static async Task<RealtimeEnvelope> SendAsync<T>(ClientWebSocket socket, int messageId, T command, string operationId)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var requestId = Guid.NewGuid().ToString("N");
-        var envelope = new RealtimeEnvelope { MessageId = messageId, RequestId = requestId, OperationId = operationId, ProtocolVersion = version, Payload = MessagePackSerializer.Serialize(command) };
+        var envelope = new RealtimeEnvelope { MessageId = messageId, RequestId = requestId, OperationId = operationId, Payload = MessagePackSerializer.Serialize(command) };
         await socket.SendAsync(MessagePackSerializer.Serialize(envelope), WebSocketMessageType.Binary, true, timeout.Token);
         using var stream = new MemoryStream();
         var buffer = new byte[8192];
@@ -113,12 +113,8 @@ public sealed class GatewaySmokeTests
             Assert.True(stream.Length <= 1024 * 1024);
         } while (!received.EndOfMessage);
         var response = MessagePackSerializer.Deserialize<RealtimeEnvelope>(stream.ToArray());
-        if (version is 1 or 2)
-        {
-            Assert.Equal(requestId, response.RequestId);
-            Assert.Equal(operationId, response.OperationId);
-            Assert.Equal(version, response.ProtocolVersion);
-        }
+        Assert.Equal(requestId, response.RequestId);
+        Assert.Equal(operationId, response.OperationId);
         return response;
     }
 

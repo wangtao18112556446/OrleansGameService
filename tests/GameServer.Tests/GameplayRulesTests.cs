@@ -69,11 +69,10 @@ public sealed class GameplayRulesTests
     }
 
     [Fact]
-    public void Realtime_envelope_round_trips_with_versioned_payload()
+    public void Realtime_envelope_round_trips_move_command()
     {
-        var envelope = new RealtimeEnvelope { MessageId = RealtimeMessageIds.Move, RequestId = "r1", OperationId = "o1", ProtocolVersion = 1, Payload = MessagePackSerializer.Serialize(new MoveCommand { X = 2, Y = 3 }) };
+        var envelope = new RealtimeEnvelope { MessageId = RealtimeMessageIds.Move, RequestId = "r1", OperationId = "o1", Payload = MessagePackSerializer.Serialize(new MoveCommand { X = 2, Y = 3 }) };
         var restored = MessagePackSerializer.Deserialize<RealtimeEnvelope>(MessagePackSerializer.Serialize(envelope));
-        Assert.Equal(1, restored.ProtocolVersion);
         Assert.Equal(2, MessagePackSerializer.Deserialize<MoveCommand>(restored.Payload).X);
     }
 }

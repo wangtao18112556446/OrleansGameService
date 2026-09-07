@@ -73,11 +73,46 @@ public sealed class GameplayCoreTests
     }
 
     [Fact]
-    public void Version_two_envelope_round_trips_new_command()
+    public void Realtime_envelope_round_trips_skill_command()
     {
-        var envelope = new RealtimeEnvelope { MessageId = RealtimeMessageIds.UseSkill, RequestId = "r2", OperationId = "o2", ProtocolVersion = 2, Payload = MessagePackSerializer.Serialize(new UseSkillCommand { SkillId = "power-strike", TargetMonsterId = "green-slime" }) };
+        var envelope = new RealtimeEnvelope { MessageId = RealtimeMessageIds.UseSkill, RequestId = "r2", OperationId = "o2", Payload = MessagePackSerializer.Serialize(new UseSkillCommand { SkillId = "power-strike", TargetMonsterId = "green-slime" }) };
         var restored = MessagePackSerializer.Deserialize<RealtimeEnvelope>(MessagePackSerializer.Serialize(envelope));
-        Assert.Equal(2, restored.ProtocolVersion);
         Assert.Equal("power-strike", MessagePackSerializer.Deserialize<UseSkillCommand>(restored.Payload).SkillId);
+    }
+
+    [Fact]
+    public void Realtime_snapshot_round_trips_complete_character_state()
+    {
+        var character = new CharacterSnapshot(
+            "character-1",
+            "account-1",
+            "Hero",
+            "starter-plains:v1",
+            "v1",
+            new WorldPosition(2, 3),
+            4,
+            new Dictionary<string, decimal> { ["attack"] = 12m },
+            [new InventoryStack("sword", 1)],
+            [new QuestProgress("slime-hunt", 1, true, false)],
+            "adventurer",
+            new Dictionary<string, decimal> { ["mana"] = 8m },
+            [new EquippedItem("main-hand", "sword")],
+            [new ActiveBuff("power", DateTimeOffset.Parse("2026-09-07T00:00:00Z"))],
+            ["power-strike"]);
+        var payload = new CharacterSnapshotPayload
+        {
+            Character = character,
+            Zone = new ZoneSnapshot("starter-plains:v1", "v1", []),
+            Interaction = new NpcInteraction("guard-aria", ["slime-hunt"], [])
+        };
+
+        var restored = MessagePackSerializer.Deserialize<CharacterSnapshotPayload>(MessagePackSerializer.Serialize(payload));
+
+        Assert.Equal("adventurer", restored.Character.ClassId);
+        Assert.Equal(8m, restored.Character.Resources["mana"]);
+        Assert.Equal("sword", restored.Character.Equipment.Single().ItemId);
+        Assert.Equal("power", restored.Character.Buffs.Single().BuffId);
+        Assert.Equal("power-strike", restored.Character.Skills.Single());
+        Assert.Equal("guard-aria", restored.Interaction!.NpcId);
     }
 }

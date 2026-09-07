@@ -20,7 +20,7 @@
 
 开发时先注册 `POST /api/auth/register`，再登录 `POST /api/auth/login` 获取 Bearer JWT；创建角色可提交 `{ "name": "Rin", "classId": "adventurer" }`（当内容包只有一个职业时 `classId` 可省略），再调用 `/api/characters/{id}/enter`（`{ "zoneId": "starter-plains" }`）进入当前内容版本的区域实例。WebSocket 连接为 `/ws?characterId={id}`，需携带 Bearer JWT，二进制帧为 `RealtimeEnvelope`。
 
-协议 V1 保留移动、普攻和任务命令。协议 V2 新增 `UseSkill`、`Equip`、`Unequip` 与 `InteractNpc` 消息，并返回包含职业、资源、装备、Buff、已学技能和 NPC 的 V2 快照。内容包只可使用服务器内置的伤害、资源和 Buff 效果类型；导入后的内容版本不可覆盖，已运行区域会固定使用其创建时的版本。
+当前实时协议支持移动、普攻、任务、`UseSkill`、`Equip`、`Unequip` 与 `InteractNpc` 命令，并统一返回包含职业、资源、装备、Buff、已学技能及可选 NPC 交互结果的完整快照。项目尚未发布客户端，因此协议只维护当前形态，不保留未使用的历史版本。内容包只可使用服务器内置的伤害、资源和 Buff 效果类型；导入后的内容版本不可覆盖，已运行区域会固定使用其创建时的版本。
 
 `Content/game-content.v1.json` 是版本化的首个内容包。新内容通过管理员 `POST /api/admin/content/import` 导入；已运行区域固定其内容版本。
 
@@ -30,7 +30,7 @@
 
 角色 Grain 状态是背包、任务、装备和技能资源的权威来源。击杀会先保存攻击意图，再调用怪物；怪物将生命值与攻击回执一次保存。角色拿到结果后，将奖励、任务进度、资源消耗、操作回执和待投递奖励一起保存，最后幂等同步 PostgreSQL 账本。账本失败时保留待投递记录，下一次角色请求或重激活时继续恢复。`PlayerItemProjections` 表示累计发奖量，不包含初始物品或装备转移，不能作为当前背包查询来源。
 
-操作号必须非空且不超过 128 个字符。相同角色重复提交相同命令返回原业务结果与当前快照；同号不同命令返回 `operation_conflict`，非法操作号返回 `invalid_operation_id`。旧状态中仅有操作号、没有指纹的请求返回 `operation_expired`，客户端应刷新状态而非改号盲目重发。服务端临时故障返回 `server_error`，客户端必须使用相同操作号重试。不同角色可安全使用相同操作号。MessagePack V1/V2 字段编号保持不变，新增的序列化标记用于 Orleans 内部通信。
+操作号必须非空且不超过 128 个字符。相同角色重复提交相同命令返回原业务结果与当前快照；同号不同命令返回 `operation_conflict`，非法操作号返回 `invalid_operation_id`。旧状态中仅有操作号、没有指纹的请求返回 `operation_expired`，客户端应刷新状态而非改号盲目重发。服务端临时故障返回 `server_error`，客户端必须使用相同操作号重试。不同角色可安全使用相同操作号。MessagePack 序列化标记同时用于网络 DTO 与 Orleans 内部通信。
 
 区域切换先持久化意图并加入目标，再提交角色归属和清理原成员关系。容量不足时保留原区域；跨步骤故障会在重激活或下一次请求时恢复。切换过程中成员列表可能短暂包含两个区域，角色命令在恢复完成后才继续执行。
 
@@ -59,7 +59,7 @@ dotnet test OrleansGameService.slnx
 pwsh -File scripts/Test-Integration.ps1
 ```
 
-普通测试包含真实 Orleans 测试集群、存储提交前/后故障注入、奖励重投、区域切换恢复和 V1/V2 固定报文兼容检查。真实 PostgreSQL 与 HTTP/WebSocket 测试在未配置依赖时明确显示为跳过。
+普通测试包含实时命令序列化往返、真实 Orleans 测试集群、存储提交前/后故障注入、奖励重投和区域切换恢复。真实 PostgreSQL 与 HTTP/WebSocket 测试在未配置依赖时明确显示为跳过。
 
 集成脚本启动独立 `orleans-game-tests` Compose 项目，使用 PostgreSQL `15432`、Redis `16379` 和 Gateway `18080` 端口。它验证迁移及账本并发，执行注册、登录、创建角色、入区、接任务、击杀、领奖，再重启 Gateway 验证账号、角色状态和操作回执，最后重跑 Orleans 初始化。测试账号暂存在被 Git 忽略的 `TestResults/smoke-state.json`，CI 不上传该文件。完成后可用 `docker compose -p orleans-game-tests down` 停止测试实例，保留测试数据卷。
 
