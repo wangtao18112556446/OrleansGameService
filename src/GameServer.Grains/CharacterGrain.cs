@@ -11,7 +11,8 @@ public sealed class CharacterGrain(
     [PersistentState("character", "gameStore")] IPersistentState<CharacterState> state,
     IGameContentCatalog contentCatalog,
     IRewardLedger rewardLedger,
-    GameFeatureRegistry features) : Grain, ICharacterGrain
+    GameFeatureRegistry features,
+    TimeProvider timeProvider) : Grain, ICharacterGrain
 {
     public async Task InitializeAsync(string accountId, string name, string contentVersion, string classId)
     {
@@ -44,9 +45,19 @@ public sealed class CharacterGrain(
         var content = contentCatalog.GetVersion(contentVersion);
         if (!content.Zones.ContainsKey(zoneId)) return Failure("invalid_zone");
         await RecoverAsync();
+        var targetZoneId = ZoneKey(zoneId, contentVersion);
+        if (state.State.ZoneId == targetZoneId)
+        {
+            var currentZone = await Zone().GetSnapshotAsync();
+            if (currentZone.Entities.Any(x => x.Kind == "player" && x.EntityId == this.GetPrimaryKeyString()))
+                return Success();
+        }
         state.State.PendingZoneTransfer = new PendingZoneTransfer
         {
-            PreviousZoneId = state.State.ZoneId, TargetZoneId = ZoneKey(zoneId, contentVersion), ContentVersion = contentVersion
+            PreviousZoneId = state.State.ZoneId,
+            TargetZoneId = targetZoneId,
+            ContentVersion = contentVersion,
+            MovementBudget = CaptureMovementBudgetForTransfer(content.Movement)
         };
         await SaveAsync();
         if (!await ResumeZoneTransferAsync()) return Failure("zone_unavailable");
@@ -59,8 +70,24 @@ public sealed class CharacterGrain(
         var fingerprint = OperationIdentity.Fingerprint("move", command);
         if (await ReplayAsync(operationId, fingerprint) is { } replay) return replay;
         var next = new WorldPosition(command.X, command.Y);
-        if (!CombatRules.ValidateMove(state.State.Position, next, 12f).Allowed) return Failure("invalid_movement");
-        state.State.PendingMove = new PendingMove { OperationId = operationId, Fingerprint = fingerprint, Position = next };
+        var definition = Content().Movement;
+        var clock = ReadMovementClock(definition);
+        var decision = MovementRules.Evaluate(state.State.Position, next, clock.AvailableDistance, clock.Elapsed, definition);
+        SetMovementRuntime(decision.AvailableDistance, clock.Timestamp, clock.UpdatedAtUtc);
+        if (!decision.Allowed) return Failure(decision.ErrorCode!);
+
+        state.State.PendingMove = new PendingMove
+        {
+            OperationId = operationId,
+            Fingerprint = fingerprint,
+            Position = next,
+            ApprovedBudget = new MovementBudgetState
+            {
+                AvailableDistance = decision.AvailableDistance,
+                UpdatedAtUtc = clock.UpdatedAtUtc
+            }
+        };
+        runtimeApprovedMoveOperationId = operationId;
         await SaveAsync();
         await ResumeMoveAsync();
         return ReceiptResult(state.State.OperationReceipts[operationId]);
@@ -263,6 +290,11 @@ public sealed class CharacterGrain(
     private GameContent Content() => contentCatalog.GetVersion(state.State.ContentVersion);
     private static string ZoneKey(string zoneId, string contentVersion) => $"{zoneId}:{contentVersion}";
     private bool reloadRequired;
+    private bool movementRuntimeInitialized;
+    private float runtimeMovementAvailableDistance;
+    private long runtimeMovementTimestamp;
+    private DateTimeOffset runtimeMovementUpdatedAtUtc;
+    private string? runtimeApprovedMoveOperationId;
 
     private async Task SaveAsync()
     {
@@ -271,6 +303,7 @@ public sealed class CharacterGrain(
         {
             // 写入超时可能已经提交；下次请求必须重新读取，不能继续使用不确定的内存状态。
             reloadRequired = true;
+            ResetMovementRuntime();
             throw;
         }
     }
@@ -328,11 +361,21 @@ public sealed class CharacterGrain(
     private async Task ResumeMoveAsync()
     {
         var pending = state.State.PendingMove!;
+        var approvedBudget = pending.ApprovedBudget ?? CreateLegacyPendingMoveBudget(pending);
         var moved = await Zone().MoveAsync(this.GetPrimaryKeyString(), pending.Position);
-        if (moved) state.State.Position = pending.Position;
+        if (moved)
+        {
+            state.State.Position = pending.Position;
+            state.State.MovementBudget = approvedBudget;
+        }
+        else
+        {
+            ResetMovementRuntime();
+        }
         CompleteOperation(pending.OperationId, pending.Fingerprint, error: moved ? null : "not_in_zone");
         state.State.PendingMove = null;
         await SaveAsync();
+        if (runtimeApprovedMoveOperationId == pending.OperationId) runtimeApprovedMoveOperationId = null;
     }
 
     private async Task ResumeCombatAsync()
@@ -373,6 +416,14 @@ public sealed class CharacterGrain(
             state.State.ZoneId = pending.TargetZoneId;
             state.State.ContentVersion = pending.ContentVersion;
             state.State.Position = new WorldPosition(0, 0);
+            if (pending.MovementBudget is not null)
+            {
+                pending.MovementBudget.AvailableDistance = MathF.Min(
+                    pending.MovementBudget.AvailableDistance,
+                    MovementRules.Capacity(Content().Movement));
+                state.State.MovementBudget = pending.MovementBudget;
+            }
+            ResetMovementRuntime();
             NormalizeResources(Content());
             pending.Joined = true;
             await SaveAsync();
@@ -383,6 +434,73 @@ public sealed class CharacterGrain(
         await SaveAsync();
         return true;
     }
+
+    private (float AvailableDistance, TimeSpan Elapsed, long Timestamp, DateTimeOffset UpdatedAtUtc) ReadMovementClock(MovementDefinition definition)
+    {
+        var timestamp = timeProvider.GetTimestamp();
+        var nowUtc = timeProvider.GetUtcNow();
+        if (movementRuntimeInitialized)
+        {
+            // 激活内只信任单调时间；UTC 仅作为下次重激活的持久化锚点，并且不得向后移动。
+            var elapsed = timeProvider.GetElapsedTime(runtimeMovementTimestamp, timestamp);
+            var updatedAtUtc = nowUtc > runtimeMovementUpdatedAtUtc ? nowUtc : runtimeMovementUpdatedAtUtc;
+            return (runtimeMovementAvailableDistance, elapsed, timestamp, updatedAtUtc);
+        }
+
+        if (state.State.MovementBudget is { } persisted)
+        {
+            // 单调 tick 不能跨进程比较，重激活只按 UTC 恢复；负差值和超长停顿由规则层安全截断。
+            var elapsed = nowUtc > persisted.UpdatedAtUtc ? nowUtc - persisted.UpdatedAtUtc : TimeSpan.Zero;
+            var updatedAtUtc = nowUtc > persisted.UpdatedAtUtc ? nowUtc : persisted.UpdatedAtUtc;
+            return (persisted.AvailableDistance, elapsed, timestamp, updatedAtUtc);
+        }
+
+        return (MovementRules.Capacity(definition), TimeSpan.Zero, timestamp, nowUtc);
+    }
+
+    private void SetMovementRuntime(float availableDistance, long timestamp, DateTimeOffset updatedAtUtc)
+    {
+        movementRuntimeInitialized = true;
+        runtimeMovementAvailableDistance = availableDistance;
+        runtimeMovementTimestamp = timestamp;
+        runtimeMovementUpdatedAtUtc = updatedAtUtc;
+    }
+
+    private MovementBudgetState CaptureMovementBudgetForTransfer(MovementDefinition targetDefinition)
+    {
+        var sourceDefinition = Content().Movement;
+        var clock = ReadMovementClock(sourceDefinition);
+        var current = MovementRules.Evaluate(state.State.Position, state.State.Position, clock.AvailableDistance, clock.Elapsed, sourceDefinition);
+        SetMovementRuntime(current.AvailableDistance, clock.Timestamp, clock.UpdatedAtUtc);
+        // 切区只允许按目标版本收紧容量，不能借内容版本或区域变化补满预算。
+        return new MovementBudgetState
+        {
+            AvailableDistance = MathF.Min(current.AvailableDistance, MovementRules.Capacity(targetDefinition)),
+            UpdatedAtUtc = clock.UpdatedAtUtc
+        };
+    }
+
+    private MovementBudgetState CreateLegacyPendingMoveBudget(PendingMove pending)
+    {
+        var definition = Content().Movement;
+        var nowUtc = timeProvider.GetUtcNow();
+        // 旧版 PendingMove 已通过原 12 单位规则核准；从满容量扣一次可保留结果且不会在恢复时赠送距离。
+        var decision = MovementRules.Evaluate(
+            state.State.Position,
+            pending.Position,
+            MovementRules.Capacity(definition),
+            TimeSpan.Zero,
+            definition);
+        if (!decision.Allowed) throw new InvalidOperationException("Legacy pending move exceeds the configured movement capacity.");
+        return new MovementBudgetState { AvailableDistance = decision.AvailableDistance, UpdatedAtUtc = nowUtc };
+    }
+
+    private void ResetMovementRuntime()
+    {
+        movementRuntimeInitialized = false;
+        runtimeApprovedMoveOperationId = null;
+    }
+
     private CommandResult Success(AttackResult? attack = null, NpcInteraction? interaction = null) => new(true, null, Snapshot(), attack) { SnapshotV2 = SnapshotV2(), Interaction = interaction };
     private CommandResult Failure(string code, AttackResult? attack = null) => new(false, code, Snapshot(), attack) { SnapshotV2 = SnapshotV2() };
 }

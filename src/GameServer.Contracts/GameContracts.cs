@@ -67,6 +67,11 @@ public sealed record EffectDefinition(string Id, EffectKind Kind, decimal Amount
     public decimal ScalingFactor { get; init; }
 }
 
+/// <summary>定义角色移动速度以及服务器最多允许累积的移动时间预算。</summary>
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+public sealed record MovementDefinition(float SpeedPerSecond, TimeSpan MaximumBudget);
+
+/// <summary>聚合一个不可变内容版本中的玩法定义，并为旧内容提供兼容缺省值。</summary>
 [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 public sealed record GameContent(string Version, IReadOnlyDictionary<string, AttributeDefinition> Attributes, IReadOnlyDictionary<string, ItemDefinition> Items, IReadOnlyDictionary<string, MonsterDefinition> Monsters, IReadOnlyDictionary<string, QuestDefinition> Quests)
 {
@@ -79,6 +84,7 @@ public sealed record GameContent(string Version, IReadOnlyDictionary<string, Att
     public IReadOnlyDictionary<string, ZoneDefinition> Zones { get; init; } = new Dictionary<string, ZoneDefinition>();
     public IReadOnlyDictionary<string, DropTableDefinition> DropTables { get; init; } = new Dictionary<string, DropTableDefinition>();
     public IReadOnlyDictionary<string, EffectDefinition> Effects { get; init; } = new Dictionary<string, EffectDefinition>();
+    public MovementDefinition Movement { get; init; } = new(6f, TimeSpan.FromSeconds(2));
 }
 
 public interface IGameContentCatalog { GameContent GetVersion(string version); GameContent GetActive(); void Activate(GameContent content); IReadOnlyList<GameContent> GetAll(); }

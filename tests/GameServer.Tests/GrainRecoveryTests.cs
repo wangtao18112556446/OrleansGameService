@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using GameServer.Contracts;
 using GameServer.Domain.Gameplay;
 using GameServer.Grains.State;
@@ -19,6 +20,7 @@ public sealed class GrainRecoveryTests : IAsyncLifetime
 {
     private readonly FaultStorage storage = new();
     private readonly TestLedger ledger = new();
+    private readonly ManualTimeProvider timeProvider = new(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
     private InProcessTestCluster cluster = null!;
 
     public async Task InitializeAsync()
@@ -40,6 +42,7 @@ public sealed class GrainRecoveryTests : IAsyncLifetime
             services.AddSingleton(catalog.Object);
             services.AddSingleton(GameplayCore.CreateRegistry());
             services.AddSingleton<IRewardLedger>(ledger);
+            services.AddSingleton<TimeProvider>(timeProvider);
             services.AddKeyedSingleton<IGrainStorage>("gameStore", storage);
             services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Error));
         }));
@@ -173,6 +176,70 @@ public sealed class GrainRecoveryTests : IAsyncLifetime
         var zone = await cluster.Client.GetGrain<IZoneGrain>(snapshot.ZoneId).GetSnapshotAsync();
         Assert.Equal(new WorldPosition(3, 0), snapshot.Position);
         Assert.Equal(snapshot.Position, zone.Entities.Single(x => x.EntityId == "hero").Position);
+        for (var x = 4; x <= 12; x++) Assert.True((await character.MoveAsync(new MoveCommand { X = x, Y = 0 }, $"after-recovery-{x}")).Succeeded);
+        Assert.Equal("movement_rate_limited", (await character.MoveAsync(new MoveCommand { X = 13, Y = 0 }, "after-recovery-limited")).ErrorCode);
+    }
+
+    [Fact]
+    public async Task Rapid_small_moves_cannot_exceed_server_time_budget()
+    {
+        var character = await CreateCharacterAsync();
+        for (var x = 3; x <= 12; x++) Assert.True((await character.MoveAsync(new MoveCommand { X = x, Y = 0 }, $"burst-{x}")).Succeeded);
+        Assert.Equal("movement_rate_limited", (await character.MoveAsync(new MoveCommand { X = 13, Y = 0 }, "burst-limited")).ErrorCode);
+
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
+        Assert.True((await character.MoveAsync(new MoveCommand { X = 13, Y = 0 }, "burst-limited")).Succeeded);
+    }
+
+    [Fact]
+    public async Task Reactivation_and_clock_rollback_do_not_refill_movement_budget()
+    {
+        var character = await CreateCharacterAsync();
+        for (var x = 3; x <= 12; x++) Assert.True((await character.MoveAsync(new MoveCommand { X = x, Y = 0 }, $"consume-{x}")).Succeeded);
+        timeProvider.RewindUtc(TimeSpan.FromHours(1));
+        await cluster.DeactivateAsync(character);
+
+        Assert.Equal("movement_rate_limited", (await character.MoveAsync(new MoveCommand { X = 13, Y = 0 }, "after-rollback")).ErrorCode);
+    }
+
+    [Fact]
+    public async Task Zone_transfer_and_reenter_do_not_grant_a_new_movement_budget()
+    {
+        var character = await CreateCharacterAsync();
+        Assert.True((await character.EnterZoneAsync("starter-plains", "v1")).Succeeded);
+        Assert.Equal(new WorldPosition(2, 0), (await character.GetSnapshotAsync()).Position);
+        for (var x = 3; x <= 12; x++) Assert.True((await character.MoveAsync(new MoveCommand { X = x, Y = 0 }, $"transfer-{x}")).Succeeded);
+
+        Assert.True((await character.EnterZoneAsync("small", "v1")).Succeeded);
+        Assert.Equal("movement_rate_limited", (await character.MoveAsync(new MoveCommand { X = 1, Y = 0 }, "after-transfer")).ErrorCode);
+    }
+
+    [Fact]
+    public async Task Legacy_state_without_movement_budget_receives_the_defined_initial_allowance()
+    {
+        var character = await CreateCharacterAsync();
+        await cluster.DeactivateAsync(character);
+        storage.RemoveProperty("character", character.GetGrainId(), nameof(CharacterState.MovementBudget));
+
+        var result = await character.MoveAsync(new MoveCommand { X = 14, Y = 0 }, "legacy-budget");
+        Assert.True(result.Succeeded);
+        Assert.Equal(new WorldPosition(14, 0), result.Snapshot!.Position);
+    }
+
+    [Fact]
+    public async Task Legacy_pending_move_without_approved_budget_is_recovered_once()
+    {
+        var character = await CreateCharacterAsync();
+        storage.FailAfterCommit = true;
+        storage.FailNext = value => value is CharacterState { PendingMove.OperationId: "legacy-pending" };
+        await Assert.ThrowsAnyAsync<Exception>(() => character.MoveAsync(new MoveCommand { X = 3, Y = 0 }, "legacy-pending"));
+        await cluster.DeactivateAsync(character);
+        storage.RemoveProperty("character", character.GetGrainId(), nameof(CharacterState.MovementBudget));
+        storage.RemoveNestedProperty("character", character.GetGrainId(), nameof(CharacterState.PendingMove), nameof(PendingMove.ApprovedBudget));
+
+        Assert.Equal(new WorldPosition(3, 0), (await character.GetSnapshotAsync()).Position);
+        Assert.True((await character.MoveAsync(new MoveCommand { X = 14, Y = 0 }, "legacy-remaining")).Succeeded);
+        Assert.Equal("movement_rate_limited", (await character.MoveAsync(new MoveCommand { X = 15, Y = 0 }, "legacy-limited")).ErrorCode);
     }
 
     [Fact]
@@ -221,6 +288,21 @@ public sealed class GrainRecoveryTests : IAsyncLifetime
         private readonly ConcurrentDictionary<(string, GrainId), string> states = new();
         public Func<object, bool>? FailNext { get; set; }
         public bool FailAfterCommit { get; set; }
+        public void RemoveProperty(string stateName, GrainId grainId, string propertyName)
+        {
+            var key = (stateName, grainId);
+            var root = JsonNode.Parse(states[key])!.AsObject();
+            if (!root.Remove(propertyName)) throw new InvalidOperationException($"State property '{propertyName}' was not found.");
+            states[key] = root.ToJsonString();
+        }
+        public void RemoveNestedProperty(string stateName, GrainId grainId, string objectPropertyName, string propertyName)
+        {
+            var key = (stateName, grainId);
+            var root = JsonNode.Parse(states[key])!.AsObject();
+            var nested = root[objectPropertyName]?.AsObject() ?? throw new InvalidOperationException($"State object '{objectPropertyName}' was not found.");
+            if (!nested.Remove(propertyName)) throw new InvalidOperationException($"State property '{objectPropertyName}.{propertyName}' was not found.");
+            states[key] = root.ToJsonString();
+        }
         public Task ReadStateAsync<T>(string stateName, GrainId grainId, IGrainState<T> grainState)
         {
             grainState.RecordExists = states.TryGetValue((stateName, grainId), out var json);

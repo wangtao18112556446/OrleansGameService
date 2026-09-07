@@ -20,6 +20,7 @@ var jwt = builder.Configuration.GetSection("Jwt");
 var signingKey = jwt["SigningKey"] ?? throw new InvalidOperationException("Jwt:SigningKey is required.");
 
 builder.Services.AddGameInfrastructure(builder.Configuration);
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 builder.Services.AddAuthorization(options => options.AddPolicy("ContentAdmin", policy => policy.RequireRole("content-admin")));

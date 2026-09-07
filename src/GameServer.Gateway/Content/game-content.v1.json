@@ -1,5 +1,6 @@
 {
   "version": "v1",
+  "movement": { "speedPerSecond": 6, "maximumBudget": "00:00:02" },
   "attributes": {
     "health": { "id": "health", "defaultValue": 100, "minimum": 1 },
     "mana": { "id": "mana", "defaultValue": 30, "minimum": 0 },

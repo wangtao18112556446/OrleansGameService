@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using GameServer.Contracts;
 using GameServer.Domain.Gameplay;
 using GameServer.Infrastructure.Persistence;
@@ -7,8 +8,10 @@ using Microsoft.Extensions.Hosting;
 
 namespace GameServer.Infrastructure.Content;
 
+/// <summary>加载、校验并按版本保存进程内不可变游戏内容。</summary>
 public sealed class JsonGameContentCatalog : IGameContentCatalog
 {
+    private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
     private readonly Lock sync = new();
     private readonly Dictionary<string, GameContent> versions = new(StringComparer.Ordinal);
     private GameContent active;
@@ -38,10 +41,11 @@ public sealed class JsonGameContentCatalog : IGameContentCatalog
         Validate(content);
         lock (sync) { if (!versions.TryAdd(content.Version, content) && versions[content.Version] != content) throw new InvalidOperationException($"Content version '{content.Version}' already exists."); }
     }
-    public static GameContent Deserialize(string json) => JsonSerializer.Deserialize<GameContent>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? throw new InvalidOperationException("Content package is empty or invalid.");
+    public static GameContent Deserialize(string json) => JsonSerializer.Deserialize<GameContent>(json, SerializerOptions) ?? throw new InvalidOperationException("Content package is empty or invalid.");
     public static void Validate(GameContent content, GameFeatureRegistry? features = null)
     {
         if (string.IsNullOrWhiteSpace(content.Version)) throw new InvalidOperationException("Content version is required.");
+        _ = MovementRules.Capacity(content.Movement ?? throw new InvalidOperationException("Movement definition is required."));
         features ??= GameplayCore.CreateRegistry();
         foreach (var item in content.Items.Values) if (item.MaxStack <= 0) throw new InvalidOperationException($"Item '{item.Id}' must have a positive max stack.");
         foreach (var characterClass in content.Classes.Values)
@@ -82,6 +86,22 @@ public sealed class JsonGameContentCatalog : IGameContentCatalog
         foreach (var quest in content.Quests.Values) { Ensure(content.Npcs.ContainsKey(quest.NpcId), $"Quest '{quest.Id}' references unknown NPC."); Ensure(content.Monsters.ContainsKey(quest.TargetMonsterId), $"Quest '{quest.Id}' references unknown monster."); Ensure(content.Items.ContainsKey(quest.RewardItemId), $"Quest '{quest.Id}' references unknown item."); }
     }
     private static void Ensure(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+    private static JsonSerializerOptions CreateSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new ReadOnlyStringSetJsonConverter());
+        return options;
+    }
+}
+
+/// <summary>把内容包中的字符串数组适配为只读集合，同时保留区分大小写的内容标识语义。</summary>
+internal sealed class ReadOnlyStringSetJsonConverter : JsonConverter<IReadOnlySet<string>>
+{
+    public override IReadOnlySet<string> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => new HashSet<string>(JsonSerializer.Deserialize<string[]>(ref reader, options) ?? [], StringComparer.Ordinal);
+
+    public override void Write(Utf8JsonWriter writer, IReadOnlySet<string> value, JsonSerializerOptions options)
+        => JsonSerializer.Serialize(writer, value.ToArray(), options);
 }
 
 public sealed class ContentImportService(IDbContextFactory<GameDbContext> database, IGameContentCatalog catalog, GameFeatureRegistry features)
@@ -118,6 +138,7 @@ public sealed class ContentCatalogLoader(IDbContextFactory<GameDbContext> databa
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
+/// <summary>提供测试和内容文件缺失时可运行的最小玩法内容。</summary>
 public static class GameContentDefaults
 {
     public static GameContent Create() => new("v1",
@@ -146,6 +167,7 @@ public static class GameContentDefaults
         Skills = new Dictionary<string, SkillDefinition> { ["basic-attack"] = new("basic-attack", "Basic Attack", 0, TimeSpan.FromMilliseconds(500), "physical-damage") },
         Effects = new Dictionary<string, EffectDefinition> { ["physical-damage"] = new("physical-damage", EffectKind.DamageMonster) { ScalingAttributeId = "attack", ScalingFactor = 1 } },
         Zones = new Dictionary<string, ZoneDefinition> { ["starter-plains"] = new("starter-plains", "Starter Plains", 100) },
-        Npcs = new Dictionary<string, NpcDefinition> { ["guard-aria"] = new("guard-aria", "Guard Aria", new WorldPosition(0, 2), ["slime-hunt"]) }
+        Npcs = new Dictionary<string, NpcDefinition> { ["guard-aria"] = new("guard-aria", "Guard Aria", new WorldPosition(0, 2), ["slime-hunt"]) },
+        Movement = new MovementDefinition(6f, TimeSpan.FromSeconds(2))
     };
 }

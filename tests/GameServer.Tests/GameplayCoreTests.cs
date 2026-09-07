@@ -5,6 +5,7 @@ using MessagePack;
 
 namespace GameServer.Tests;
 
+/// <summary>验证玩法模块注册、内容引用和基础库存行为。</summary>
 public sealed class GameplayCoreTests
 {
     [Fact]
@@ -36,11 +37,39 @@ public sealed class GameplayCoreTests
     }
 
     [Fact]
+    public void Content_validation_rejects_invalid_movement_budget()
+    {
+        var content = GameContentDefaults.Create() with { Movement = new MovementDefinition(0f, TimeSpan.FromSeconds(2)) };
+        Assert.Throws<InvalidOperationException>(() => JsonGameContentCatalog.Validate(content));
+    }
+
+    [Fact]
+    public void Legacy_content_without_movement_definition_uses_compatible_defaults()
+    {
+        const string legacyJson = """
+            { "version": "legacy", "attributes": {}, "items": {}, "monsters": {}, "quests": {} }
+            """;
+        var content = JsonGameContentCatalog.Deserialize(legacyJson);
+        JsonGameContentCatalog.Validate(content);
+        Assert.Equal(12f, MovementRules.Capacity(content.Movement));
+    }
+
+    [Fact]
     public void Default_content_has_a_complete_core_module_graph()
     {
         var content = GameContentDefaults.Create();
         JsonGameContentCatalog.Validate(content);
         Assert.Contains("basic-attack", content.Classes["adventurer"].InitialSkillIds);
+    }
+
+    [Fact]
+    public void Versioned_content_file_deserializes_and_passes_validation()
+    {
+        var path = Path.GetFullPath(
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "GameServer.Gateway", "Content", "game-content.v1.json"));
+        var content = JsonGameContentCatalog.Deserialize(File.ReadAllText(path));
+        JsonGameContentCatalog.Validate(content);
+        Assert.Equal(12f, MovementRules.Capacity(content.Movement));
     }
 
     [Fact]

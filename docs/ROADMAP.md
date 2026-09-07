@@ -17,7 +17,7 @@
 | 能力 | 当前状态与证据 | 主要缺口 |
 | --- | --- | --- |
 | 账号、鉴权、角色 | `Program.cs`、`AccountGrain`；Identity/JWT、角色归属校验 | 会话替换、注销/封禁生效、账号风控与管理审计 |
-| 区域与移动 | `CharacterGrain`、`ZoneGrain`；入区、容量与切区恢复 | 按服务器时间验证速度、地图约束、离线成员清理、分线 |
+| 区域与移动 | `CharacterGrain`、`ZoneGrain`；入区、容量、切区恢复及服务器时间预算 | 地图约束、离线成员清理、分线 |
 | 实时通信 | `WebSocketGameEndpoint`；V1/V2、分片接收、64 KiB 上限 | 多人推送、AOI、序列与补同步、连接级限流和背压 |
 | 战斗与内容 | 属性、技能、资源、装备、Buff、NPC、击杀任务、掉落 | 怪物主动 AI、完整成长、物品实例、技能目标扩展 |
 | 持久化与恢复 | `State/`、`RewardLedger`、恢复测试；操作指纹、待投递奖励、EF 迁移 | 回执期限/归档、恢复积压处理、多节点故障验证 |
@@ -25,7 +25,7 @@
 | 工程与运维 | CI、Compose、迁移检查、真实 Grain 故障注入测试 | 实际依赖就绪检查、指标导出与业务告警、容量与备份恢复报告 |
 | 开源交付 | README、仓库指南及本轮规划 | 许可证、版本策略落实、发行包、接入样例、支持与安全报告流程 |
 
-本轮本地运行 `dotnet test OrleansGameService.slnx --no-restore`：22 通过、6 跳过、0 失败。跳过项需要 PostgreSQL 或 Gateway 集成环境；本轮未执行 Compose 集成脚本，不能据此确认生产式部署通过。
+本轮本地运行 `dotnet test OrleansGameService.slnx --no-restore`：33 通过、6 跳过、0 失败。跳过项需要 PostgreSQL 或 Gateway 集成环境；尝试执行 Compose 集成脚本时环境找不到 `docker` 命令，不能据此确认生产式部署通过。
 
 ## 阶段与验收
 

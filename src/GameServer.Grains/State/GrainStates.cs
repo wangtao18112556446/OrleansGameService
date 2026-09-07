@@ -35,6 +35,7 @@ public sealed class CharacterState
     public PendingCombat? PendingCombat { get; set; }
     public PendingMove? PendingMove { get; set; }
     public PendingZoneTransfer? PendingZoneTransfer { get; set; }
+    public MovementBudgetState? MovementBudget { get; set; }
 }
 
 /// <summary>保存命令指纹与业务结果；重试时返回当前角色快照。</summary>
@@ -71,16 +72,17 @@ public sealed class PendingCombat
     public List<string> BuffIds { get; set; } = [];
 }
 
-/// <summary>在更新区域坐标前保存移动意图，防止区域与角色分步提交后位置不一致。</summary>
+/// <summary>在更新区域坐标前保存目标位置与核准预算，防止恢复时重复计算或扣减。</summary>
 [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 public sealed class PendingMove
 {
     public string OperationId { get; set; } = string.Empty;
     public string Fingerprint { get; set; } = string.Empty;
     public WorldPosition Position { get; set; }
+    public MovementBudgetState? ApprovedBudget { get; set; }
 }
 
-/// <summary>保存区域切换意图，加入目标失败时保留原区域，成功提交后清理旧成员关系。</summary>
+/// <summary>保存区域切换意图和切换前预算，成功后不因换区额外补充移动距离。</summary>
 [Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
 public sealed class PendingZoneTransfer
 {
@@ -88,6 +90,15 @@ public sealed class PendingZoneTransfer
     public string TargetZoneId { get; set; } = string.Empty;
     public string ContentVersion { get; set; } = string.Empty;
     public bool Joined { get; set; }
+    public MovementBudgetState? MovementBudget { get; set; }
+}
+
+/// <summary>保存最近一次服务器核准后的剩余移动距离及其持久化时间锚点。</summary>
+[Orleans.GenerateSerializer(GenerateFieldIds = Orleans.GenerateFieldIds.PublicProperties)]
+public sealed class MovementBudgetState
+{
+    public float AvailableDistance { get; set; }
+    public DateTimeOffset UpdatedAtUtc { get; set; }
 }
 
 /// <summary>保存区域固定内容版本及成员位置。</summary>

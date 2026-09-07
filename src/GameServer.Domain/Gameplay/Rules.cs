@@ -10,10 +10,6 @@ public static class CombatRules
             ? new RuleDecision(true)
             : new RuleDecision(false, "target_out_of_range");
 
-    public static RuleDecision ValidateMove(WorldPosition previous, WorldPosition next, float maxDistance)
-        => previous.DistanceTo(next) <= maxDistance
-            ? new RuleDecision(true)
-            : new RuleDecision(false, "invalid_movement");
 }
 
 public static class QuestStateMachine
