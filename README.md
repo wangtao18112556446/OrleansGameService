@@ -18,7 +18,7 @@
 
 ## Run
 
-安装 Docker Desktop 后执行 `docker compose up --build`，Gateway 在 `http://localhost:8080` 提供服务。Compose 会从固定的 Orleans `v10.2.1` 标签取得官方 PostgreSQL 集群和 Grain 持久化脚本；数据库首次启动时由应用执行 EF Core 迁移，创建 Identity、配置版本、流水和累计奖励投影表。
+安装 Docker Desktop 后执行 `docker compose up --build`，Gateway 在 `http://localhost:8080` 提供服务。Compose 会从固定的 Orleans `v10.2.1` 标签取得官方 PostgreSQL 集群和 Grain 持久化脚本，并幂等补齐该版本运行时要求但官方 PostgreSQL 模板遗漏的失效 Silo 清理查询；数据库首次启动时由应用执行 EF Core 迁移，创建 Identity、配置版本、流水和累计奖励投影表。
 
 开发时先注册 `POST /api/auth/register`，再登录 `POST /api/auth/login` 获取 Bearer JWT；创建角色可提交 `{ "name": "Rin", "classId": "adventurer" }`（当内容包只有一个职业时 `classId` 可省略），再调用 `/api/characters/{id}/enter`（`{ "zoneId": "starter-plains" }`）进入当前内容版本的区域实例。WebSocket 连接为 `/ws?characterId={id}`，需携带 Bearer JWT，二进制帧为 `RealtimeEnvelope`。
 
@@ -50,7 +50,7 @@ dotnet ef migrations has-pending-model-changes --project src/GameServer.Infrastr
 dotnet ef migrations add <MigrationName> --project src/GameServer.Infrastructure --output-dir Persistence/Migrations
 ```
 
-迁移工具从 `ConnectionStrings__Postgres` 读取连接。Compose 初始化使用 libpq 的 `PGHOST` 等变量；SQL 下载失败或执行失败会阻止 Gateway 启动，完整的已有 Orleans 架构可重复启动。
+迁移工具从 `ConnectionStrings__Postgres` 读取连接。Compose 初始化使用 libpq 的 `PGHOST` 等变量；SQL 下载失败或执行失败会阻止 Gateway 启动。已有的完整 Orleans 架构可重复启动，缺失 `CleanupDefunctSiloEntriesKey` 时仅补写该查询，不会删除 Grain 状态。
 
 ## 验证
 
@@ -63,6 +63,6 @@ pwsh -File scripts/Test-Integration.ps1
 
 普通测试包含模块依赖与冲突、类型化内容、配置校验、实时命令序列化往返、真实 Orleans 测试集群、存储提交前/后故障注入、奖励重投和区域切换恢复。真实 PostgreSQL 与 HTTP/WebSocket 测试在未配置依赖时明确显示为跳过。
 
-集成脚本启动独立 `orleans-game-tests` Compose 项目，使用 PostgreSQL `15432`、Redis `16379` 和 Gateway `18080` 端口。它验证迁移及账本并发，执行注册、登录、创建角色、入区、接任务、击杀、领奖，再重启 Gateway 验证账号、角色状态和操作回执，最后重跑 Orleans 初始化。测试账号暂存在被 Git 忽略的 `TestResults/smoke-state.json`，CI 不上传该文件。完成后可用 `docker compose -p orleans-game-tests down` 停止测试实例，保留测试数据卷。
+集成脚本启动独立 `orleans-game-tests` Compose 项目，使用 PostgreSQL `15432`、Redis `16379` 和 Gateway `18080` 端口。它验证迁移及账本并发，执行注册、登录、创建角色、入区、接任务、击杀、领奖，再重启 Gateway 验证账号、角色状态和操作回执，最后重跑 Orleans 初始化并断言失效 Silo 清理查询存在。测试账号暂存在被 Git 忽略的 `TestResults/smoke-state.json`，CI 不上传该文件。完成后可用 `docker compose -p orleans-game-tests down` 停止测试实例，保留测试数据卷。
 
 GitHub Actions 已配置构建、单元/Grain 测试和完整 Compose 验证，并保存测试报告与容器日志；具体执行结果以对应 CI 记录为准。后续迭代及验收要求统一维护在[开发路线](docs/ROADMAP.md)和[近期待办](docs/BACKLOG.md)。

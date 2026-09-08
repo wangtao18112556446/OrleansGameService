@@ -3,7 +3,16 @@ $PSNativeCommandUseErrorActionPreference = $true
 $repo = Split-Path -Parent $PSScriptRoot
 Push-Location $repo
 try {
-    Get-Command docker -ErrorAction Stop | Out-Null
+    $docker = Get-Command docker -ErrorAction SilentlyContinue
+    if (-not $docker) {
+        throw 'Docker Desktop or Docker Engine is required to run the integration script. Install Docker and ensure docker is on PATH, then rerun: pwsh -File scripts/Test-Integration.ps1'
+    }
+
+    $composeVersion = & docker compose version 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($composeVersion)) {
+        throw 'Docker Compose is required to run the integration script. Install Docker Desktop (with Compose enabled) or enable the Docker Compose plugin, then rerun: pwsh -File scripts/Test-Integration.ps1'
+    }
+
     # 使用独立 Compose 项目和端口，避免测试重启正在开发的游戏实例。
     $env:GAME_POSTGRES_PORT = '15432'
     $env:GAME_REDIS_PORT = '16379'
@@ -35,6 +44,10 @@ try {
     dotnet test OrleansGameService.slnx --no-build --filter FullyQualifiedName~GatewaySmokeTests --logger 'trx;LogFileName=smoke-restart.trx'
     # 重跑初始化服务，覆盖已有 Orleans 表及业务迁移记录的重复启动路径。
     docker compose -p orleans-game-tests run --rm orleans-schema
+    $cleanupQuery = docker compose -p orleans-game-tests exec -T postgres psql -U game -d orleans_game -tAc "SELECT QueryText FROM OrleansQuery WHERE QueryKey = 'CleanupDefunctSiloEntriesKey'"
+    if ($LASTEXITCODE -ne 0 -or ($cleanupQuery -join "`n") -notmatch 'Status\s*=\s*6') {
+        throw 'Orleans schema did not contain a valid CleanupDefunctSiloEntriesKey query after initialization.'
+    }
 } finally {
     Pop-Location
 }
